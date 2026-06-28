@@ -1,7 +1,7 @@
 ## Interface: 120000
 ## Title: PI Helper
 ## Notes: Helps priests assign and update the Power Infusion macro target.
-## Author: Neon
+## Author: NeonLazor
 ## Version: 1.0
 ## SavedVariables: PIHelperDB
 
