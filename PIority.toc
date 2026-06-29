@@ -1,0 +1,9 @@
+## Interface: 120000
+## Title: PIority
+## Notes: PIority takes the guesswork out of Power Infusion targeting. Scans your party or raid, ranks every DPS/tank spec by PI value, and lets you click any row to instantly update your PI_H macro. Features auto-pick mode, item level display, addon-presence detection, PI request notifications, persistent layout, and slash commands (/pi, /pirequest).
+## Author: NeonLazor
+## Version: 1.0
+## SavedVariables: PIorityDB
+
+PIority_Locale.lua
+PIority.lua

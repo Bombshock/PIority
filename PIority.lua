@@ -1,13 +1,13 @@
--- PI_Helper: assign a Power Infusion macro target from a group/raid list.
+-- PIority: assign a Power Infusion macro target from a group/raid list.
 -- Sorts players by spec priority; click a row to update the PI_H macro.
 
 local _, ns = ...
 local L = ns.L
 
-local ADDON_NAME    = "PI_Helper"
+local ADDON_NAME    = "PIority"
 local MACRO_NAME    = "PI_H"
 local PI_SPELL_ID   = 10060
-local MSG_PREFIX    = "PIHelper"
+local MSG_PREFIX    = "PIority"
 local MSG_REQUEST   = "REQUEST"
 local MSG_ANNOUNCE  = "ANNOUNCE"
 
@@ -101,7 +101,7 @@ local SPEC_NAME = {
 }
 
 -------------------------------------------------------------------------------
--- Member cache (populated at runtime; persisted via PIHelperDB on load)
+-- Member cache (populated at runtime; persisted via PIorityDB on load)
 -------------------------------------------------------------------------------
 local specCache    = {}  -- [name] = specID
 local ilvlCache    = {}  -- [name] = average equipped item level (number)
@@ -294,7 +294,7 @@ end
 local function EnsureMacroExists(targetName)
     if GetMacroIndexByName(MACRO_NAME) == 0 then
         CreatePIMacro(BuildMacroBody(targetName))
-        print("|cff00ff96PI Helper:|r " .. L.MSG_MACRO_TARGETING:format(MACRO_NAME, targetName))
+        print("|cff00ff96PIority:|r " .. L.MSG_MACRO_TARGETING:format(MACRO_NAME, targetName))
     end
 end
 
@@ -310,12 +310,12 @@ local function UpdateMacroTarget(targetName)
         1
     )
     if n == 0 then
-        print("|cffff4444PI Helper:|r " .. L.MSG_MACRO_NOT_FOUND:format(MACRO_NAME))
+        print("|cffff4444PIority:|r " .. L.MSG_MACRO_NOT_FOUND:format(MACRO_NAME))
         return
     end
 
     EditMacro(MACRO_NAME, MACRO_NAME, nil, newBody)
-    print("|cff00ff96PI Helper:|r " .. L.MSG_MACRO_UPDATED:format(MACRO_NAME, targetName))
+    print("|cff00ff96PIority:|r " .. L.MSG_MACRO_UPDATED:format(MACRO_NAME, targetName))
 end
 
 local ResetPITarget  -- defined after UI elements are in scope
@@ -368,7 +368,7 @@ local notifFrame  -- same reason
 
 local function SaveFrameLayout()
     local point, _, relPoint, x, y = frame:GetPoint()
-    PIHelperDB.layout = {
+    PIorityDB.layout = {
         point    = point,
         relPoint = relPoint,
         x        = x,
@@ -379,7 +379,7 @@ local function SaveFrameLayout()
 end
 
 local function RestoreFrameLayout()
-    local l = PIHelperDB.layout
+    local l = PIorityDB.layout
     if l then
         frame:ClearAllPoints()
         frame:SetPoint(l.point, UIParent, l.relPoint, l.x, l.y)
@@ -392,11 +392,11 @@ end
 
 local function SaveNotifLayout()
     local point, _, relPoint, x, y = notifFrame:GetPoint()
-    PIHelperDB.notifLayout = { point = point, relPoint = relPoint, x = x, y = y }
+    PIorityDB.notifLayout = { point = point, relPoint = relPoint, x = x, y = y }
 end
 
 local function RestoreNotifLayout()
-    local l = PIHelperDB.notifLayout
+    local l = PIorityDB.notifLayout
     if l then
         notifFrame:ClearAllPoints()
         notifFrame:SetPoint(l.point, UIParent, l.relPoint, l.x, l.y)
@@ -495,7 +495,7 @@ local ShowNotifPreview
 -- Main frame
 -------------------------------------------------------------------------------
 
-frame = CreateFrame("Frame", "PIHelperFrame", UIParent, "BackdropTemplate")
+frame = CreateFrame("Frame", "PIorityFrame", UIParent, "BackdropTemplate")
 frame:SetSize(290, 420)
 frame:SetPoint("CENTER")
 frame:SetMovable(true)
@@ -532,8 +532,7 @@ end)
 
 local titleText = headerBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 titleText:SetPoint("CENTER", headerBar, "CENTER", 0, 0)
-titleText:SetTextColor(P.title[1], P.title[2], P.title[3])
-titleText:SetText(L.TITLE)
+titleText:SetText("|cff8552ebPI|r|cffFFDC6Bority|r")
 
 local closeBtn = CreateFrame("Button", nil, headerBar, "BackdropTemplate")
 closeBtn:SetSize(24, 24)
@@ -579,7 +578,7 @@ reInspectBtn:SetScript("OnClick", function()
     wipe(ilvlCache)
     CachePlayerSpec()
     QueueInspects()
-    print("|cff00ff96PI Helper:|r " .. L.MSG_REINSPECTING)
+    print("|cff00ff96PIority:|r " .. L.MSG_REINSPECTING)
 end)
 
 local notifToggleBtn = MakeFlatBtn(btnBar, L.BTN_ALERT_POS, nil, 20)
@@ -693,7 +692,7 @@ end)
 
 -- Autopick toggle
 local CHK = 14
-local autopickCheck = CreateFrame("Button", "PIHelperAutopick", footerBar, "BackdropTemplate")
+local autopickCheck = CreateFrame("Button", "PIorityAutopick", footerBar, "BackdropTemplate")
 autopickCheck:SetSize(CHK, CHK)
 autopickCheck:SetPoint("LEFT", footerBar, "LEFT", 10, 0)
 ApplyFlatBg(autopickCheck, P.chkBg[1], P.chkBg[2], P.chkBg[3], P.chkBg[4],
@@ -718,7 +717,7 @@ function autopickCheck:SetChecked(v)
 end
 autopickCheck:SetScript("OnClick", function()
     autopickCheck:SetChecked(not chkChecked)
-    PIHelperDB.autopick = chkChecked
+    PIorityDB.autopick = chkChecked
     if chkChecked then TryAutopick() end
 end)
 autopickCheck:SetScript("OnEnter", function(self)
@@ -737,7 +736,7 @@ chkLabel:SetText(L.CHK_AUTOPICK)
 chkLabelBtn:SetSize(chkLabel:GetStringWidth() + 2, CHK)
 chkLabelBtn:SetScript("OnClick", function()
     autopickCheck:SetChecked(not chkChecked)
-    PIHelperDB.autopick = chkChecked
+    PIorityDB.autopick = chkChecked
     if chkChecked then TryAutopick() end
 end)
 chkLabelBtn:SetScript("OnEnter", function() chkLabel:SetTextColor(1, 0.95, 1) end)
@@ -837,7 +836,7 @@ local function MakeRow(index)
     btn:SetScript("OnClick", function()
         if not btn.memberName then return end
         UpdateMacroTarget(btn.memberName)
-        PIHelperDB.lastTarget = btn.memberName
+        PIorityDB.lastTarget = btn.memberName
         statusLabel:SetText(L.STATUS_TARGET .. "|cff00ff96" .. btn.memberName .. "|r")
         frame.Refresh()
     end)
@@ -853,7 +852,7 @@ end
 function frame.Refresh()
     SyncContentWidth()
     local roster     = GetSortedRoster()
-    local lastTarget = PIHelperDB and PIHelperDB.lastTarget
+    local lastTarget = PIorityDB and PIorityDB.lastTarget
 
     resetBtn:SetEnabled(lastTarget ~= nil)
     reInspectBtn:SetEnabled(GetNumGroupMembers() > 0)
@@ -927,14 +926,14 @@ end
 
 ResetPITarget = function()
     UpdateMacroTarget("focus")
-    PIHelperDB.lastTarget = nil
+    PIorityDB.lastTarget = nil
     statusLabel:SetText(L.STATUS_NONE)
     frame.Refresh()
-    print("|cff00ff96PI Helper:|r " .. L.MSG_RESET)
+    print("|cff00ff96PIority:|r " .. L.MSG_RESET)
 end
 
 TryAutopick = function()
-    if not PIHelperDB or not PIHelperDB.autopick then return end
+    if not PIorityDB or not PIorityDB.autopick then return end
     local _, playerClass = UnitClass("player")
     if playerClass ~= "PRIEST" then return end
     if GetNumGroupMembers() == 0 then return end
@@ -942,9 +941,9 @@ TryAutopick = function()
     local roster = GetSortedRoster()
     if #roster == 0 then return end
     local top = roster[1]
-    if top.specID and SPEC_PRIORITY[top.specID] and PIHelperDB.lastTarget ~= top.name then
+    if top.specID and SPEC_PRIORITY[top.specID] and PIorityDB.lastTarget ~= top.name then
         UpdateMacroTarget(top.name)
-        PIHelperDB.lastTarget = top.name
+        PIorityDB.lastTarget = top.name
         statusLabel:SetText(L.STATUS_AUTO .. "|cff00ff96" .. top.name .. "|r")
         frame.Refresh()
     end
@@ -958,7 +957,7 @@ local function CanCastPI()
     return IsSpellKnown(PI_SPELL_ID)
 end
 
-notifFrame = CreateFrame("Frame", "PIHelperNotif", UIParent, "BackdropTemplate")
+notifFrame = CreateFrame("Frame", "PIorityNotif", UIParent, "BackdropTemplate")
 notifFrame:SetSize(140, 170)
 notifFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
 notifFrame:SetFrameStrata("HIGH")
@@ -1084,21 +1083,21 @@ eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     local arg1, arg2, arg3, arg4 = ...
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        PIHelperDB = PIHelperDB or { lastTarget = nil }
-        if PIHelperDB.priority then PIHelperDB.priority = nil end
+        PIorityDB = PIorityDB or { lastTarget = nil }
+        if PIorityDB.priority then PIorityDB.priority = nil end
 
         -- Redirect caches to persisted subtables so writes survive reloads.
-        PIHelperDB.specCache = PIHelperDB.specCache or {}
-        PIHelperDB.ilvlCache = PIHelperDB.ilvlCache or {}
-        specCache = PIHelperDB.specCache
-        ilvlCache = PIHelperDB.ilvlCache
+        PIorityDB.specCache = PIorityDB.specCache or {}
+        PIorityDB.ilvlCache = PIorityDB.ilvlCache or {}
+        specCache = PIorityDB.specCache
+        ilvlCache = PIorityDB.ilvlCache
 
         -- Drop entries for players not in the current group (stale data from last session).
         PruneCacheToGroup()
 
         RestoreFrameLayout()
         RestoreNotifLayout()
-        autopickCheck:SetChecked(PIHelperDB.autopick and true or false)
+        autopickCheck:SetChecked(PIorityDB.autopick and true or false)
         print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED)
 
     elseif event == "PLAYER_LOGIN" then
@@ -1108,9 +1107,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if playerClass == "PRIEST" and GetMacroIndexByName(MACRO_NAME) == 0 then
             local idx = CreatePIMacro(BuildResetMacroBody())
             if idx and idx > 0 then
-                print("|cff00ff96PI Helper:|r " .. L.MSG_MACRO_CREATED:format(MACRO_NAME))
+                print("|cff00ff96PIority:|r " .. L.MSG_MACRO_CREATED:format(MACRO_NAME))
             else
-                print("|cffff4444PI Helper:|r " .. L.MSG_MACRO_LIMIT:format(MACRO_NAME))
+                print("|cffff4444PIority:|r " .. L.MSG_MACRO_LIMIT:format(MACRO_NAME))
             end
         end
         -- Announce to any existing group members that this addon is loaded.
@@ -1131,7 +1130,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         elseif inGroup and not frame:IsShown() then
             -- Only auto-open for priests who have no current group target assigned.
             local _, playerClass = UnitClass("player")
-            local lastTarget = PIHelperDB and PIHelperDB.lastTarget
+            local lastTarget = PIorityDB and PIorityDB.lastTarget
             local targetStillInGroup = lastTarget and GetUnitForName(lastTarget) ~= nil
             if playerClass == "PRIEST" and not targetStillInGroup then
                 frame.Refresh()
@@ -1216,7 +1215,7 @@ SlashCmdList["PIH"] = function(msg)
         if name then
             UpdateMacroTarget(name)
         else
-            print("|cffff4444PI Helper:|r " .. L.MSG_USAGE_TARGET)
+            print("|cffff4444PIority:|r " .. L.MSG_USAGE_TARGET)
         end
     elseif cmd == "help" then
         print("|cff00ff96" .. L.HELP_HEADER .. "|r")

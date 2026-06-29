@@ -6,8 +6,8 @@ ns.L = L
 -- English (default)
 -- ============================================================
 -- NOTE: L.TITLE is intentionally NOT overridden in any locale block below.
--- The addon title must always be "PI Helper" in every language.
-L.TITLE                 = "PI Helper"
+-- The addon title must always be "PIority" in every language.
+L.TITLE                 = "PIority"
 L.BTN_REINSPECT         = "Re-inspect"
 L.BTN_ALERT_POS         = "Alert pos"
 L.BTN_RESET             = "Reset"
@@ -17,7 +17,7 @@ L.STATUS_TARGET         = "Target: "
 L.STATUS_AUTO           = "Auto: "
 L.NOTIF_REQUESTS        = "requests %s"
 L.NOTIF_PREVIEW         = "(preview)"
-L.HELP_HEADER           = "PI Helper commands:"
+L.HELP_HEADER           = "PIority commands:"
 L.HELP_TOGGLE           = "  /pi            - toggle roster window"
 L.HELP_TARGET           = "  /pi target N   - update macro target directly"
 L.HELP_HELP             = "  /pi help       - this message"
@@ -47,7 +47,7 @@ if GetLocale() == "deDE" then
     L.STATUS_AUTO           = "Auto: "
     L.NOTIF_REQUESTS        = "bittet um %s"
     L.NOTIF_PREVIEW         = "(Vorschau)"
-    L.HELP_HEADER           = "PI Helfer Befehle:"
+    L.HELP_HEADER           = "PIority Befehle:"
     L.HELP_TOGGLE           = "  /pi            - Fenster ein-/ausblenden"
     L.HELP_TARGET           = "  /pi target N   - Makroziel direkt setzen"
     L.HELP_HELP             = "  /pi help       - diese Nachricht"
