@@ -5,6 +5,8 @@ ns.L = L
 -- ============================================================
 -- English (default)
 -- ============================================================
+-- NOTE: L.TITLE is intentionally NOT overridden in any locale block below.
+-- The addon title must always be "PI Helper" in every language.
 L.TITLE                 = "PI Helper"
 L.BTN_REINSPECT         = "Re-inspect"
 L.BTN_ALERT_POS         = "Alert pos"
@@ -35,7 +37,7 @@ L.MSG_USAGE_TARGET      = "Usage: /pi target <name>"
 -- German
 -- ============================================================
 if GetLocale() == "deDE" then
-    L.TITLE                 = "PI Helfer"
+    -- L.TITLE is deliberately omitted here; see the note above.
     L.BTN_REINSPECT         = "Neu prüfen"
     L.BTN_ALERT_POS         = "Alarm Pos."
     L.BTN_RESET             = "Zurücksetzen"
