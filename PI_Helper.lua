@@ -9,6 +9,7 @@ local MACRO_NAME    = "PI_H"
 local PI_SPELL_ID   = 10060
 local MSG_PREFIX    = "PIHelper"
 local MSG_REQUEST   = "REQUEST"
+local MSG_ANNOUNCE  = "ANNOUNCE"
 
 -- Returns the client-localized name of Power Infusion.
 -- Prefers the newer C_Spell API (11.0+) with a fallback to GetSpellInfo.
@@ -67,6 +68,22 @@ local SPEC_PRIORITY = {
     [268]  = 32,  -- Brewmaster Monk
 }
 
+local CLASS_ATLAS = {
+    WARRIOR     = "classicon-warrior",
+    PALADIN     = "classicon-paladin",
+    HUNTER      = "classicon-hunter",
+    ROGUE       = "classicon-rogue",
+    PRIEST      = "classicon-priest",
+    DEATHKNIGHT = "classicon-deathknight",
+    SHAMAN      = "classicon-shaman",
+    MAGE        = "classicon-mage",
+    WARLOCK     = "classicon-warlock",
+    MONK        = "classicon-monk",
+    DRUID       = "classicon-druid",
+    DEMONHUNTER = "classicon-demonhunter",
+    EVOKER      = "classicon-evoker",
+}
+
 local SPEC_NAME = {
     [62]=  "Arcane Mage",       [63]=  "Fire Mage",          [64]=  "Frost Mage",
     [65]=  "Holy Paladin",      [66]=  "Prot Paladin",        [70]=  "Ret Paladin",
@@ -88,6 +105,7 @@ local SPEC_NAME = {
 -------------------------------------------------------------------------------
 local specCache    = {}  -- [name] = specID
 local ilvlCache    = {}  -- [name] = average equipped item level (number)
+local addonUsers   = {}  -- [name] = true (players who have PI_Helper installed)
 
 -- Remove entries for players no longer in the current group.
 local function PruneCacheToGroup()
@@ -105,6 +123,9 @@ local function PruneCacheToGroup()
             specCache[name] = nil
             ilvlCache[name] = nil
         end
+    end
+    for name in pairs(addonUsers) do
+        if not current[name] then addonUsers[name] = nil end
     end
 end
 local inspectQueue = {}
@@ -230,12 +251,49 @@ local function QueueInspects()
 end
 
 -------------------------------------------------------------------------------
+-- Addon presence announce
+-------------------------------------------------------------------------------
+
+local announceTimer = nil
+local ANNOUNCE_DELAY = 3  -- seconds; debounce so GROUP_ROSTER_UPDATE spam doesn't flood
+
+local function SendAddonAnnounce()
+    local channel
+    if IsInRaid()                   then channel = "RAID"
+    elseif GetNumGroupMembers() > 0 then channel = "PARTY"
+    end
+    if channel then
+        C_ChatInfo.SendAddonMessage(MSG_PREFIX, MSG_ANNOUNCE, channel)
+    end
+end
+
+local function ScheduleAnnounce()
+    if announceTimer then announceTimer:Cancel() end
+    announceTimer = C_Timer.NewTimer(ANNOUNCE_DELAY, function()
+        announceTimer = nil
+        SendAddonAnnounce()
+    end)
+end
+
+-------------------------------------------------------------------------------
 -- Macro helpers
 -------------------------------------------------------------------------------
 
+local function GetMacroTarget()
+    local body = GetMacroBody(MACRO_NAME)
+    if not body then return nil end
+    return body:match("/cast %[@([^,]+),exists,nodead%]")
+end
+
+-- Always create in the player (per-character) tab, never global, so each priest
+-- can have their own PI target without stomping other characters' macros.
+local function CreatePIMacro(body)
+    return CreateMacro(MACRO_NAME, "INV_Misc_QuestionMark", body, true)
+end
+
 local function EnsureMacroExists(targetName)
     if GetMacroIndexByName(MACRO_NAME) == 0 then
-        CreateMacro(MACRO_NAME, "INV_Misc_QuestionMark", BuildMacroBody(targetName), false)
+        CreatePIMacro(BuildMacroBody(targetName))
         print("|cff00ff96PI Helper:|r " .. L.MSG_MACRO_TARGETING:format(MACRO_NAME, targetName))
     end
 end
@@ -305,6 +363,9 @@ end
 -- UI
 -------------------------------------------------------------------------------
 
+local frame       -- forward-declare so SaveFrameLayout/RestoreFrameLayout can close over it
+local notifFrame  -- same reason
+
 local function SaveFrameLayout()
     local point, _, relPoint, x, y = frame:GetPoint()
     PIHelperDB.layout = {
@@ -342,38 +403,356 @@ local function RestoreNotifLayout()
     end
 end
 
-local frame = CreateFrame("Frame", "PIHelperFrame", UIParent, "BackdropTemplate")
+-- Colour palette (Keep Rollin style — purple/violet theme)
+local P = {
+    bg     = { 0.07, 0.07, 0.11, 0.97 },
+    header = { 0.13, 0.10, 0.22, 1.00 },
+    footer = { 0.09, 0.08, 0.14, 1.00 },
+    border = { 0.22, 0.18, 0.32, 1.00 },
+    sep    = { 0.30, 0.25, 0.44, 0.70 },
+    accent = { 0.52, 0.32, 0.92, 1.00 },
+    btnBg  = { 0.13, 0.11, 0.20, 0.92 },
+    btnHov = { 0.22, 0.18, 0.34, 0.95 },
+    btnBd  = { 0.28, 0.22, 0.42, 1.00 },
+    btnHBd = { 0.55, 0.42, 0.85, 1.00 },
+    text   = { 0.88, 0.86, 0.95, 1.00 },
+    dim    = { 0.72, 0.68, 0.88, 1.00 },
+    title  = { 1.00, 0.86, 0.42, 1.00 },
+    chkBg  = { 0.08, 0.08, 0.13, 0.95 },
+    chkBd  = { 0.28, 0.23, 0.42, 1.00 },
+    chkOn  = { 0.28, 0.65, 0.35, 1.00 },
+}
+
+local HEADER_H = 32
+local FOOTER_H = 32
+local BTNBAR_H = 28
+local ROW_H    = 26
+
+local solidBD = {
+    bgFile   = "Interface/Buttons/WHITE8X8",
+    edgeFile = "Interface/Buttons/WHITE8X8",
+    edgeSize = 1,
+    insets   = { left = 1, right = 1, top = 1, bottom = 1 },
+}
+
+local function ApplyFlatBg(f, r, g, b, a, er, eg, eb, ea)
+    f:SetBackdrop(solidBD)
+    f:SetBackdropColor(r, g, b, a or 1)
+    f:SetBackdropBorderColor(er or P.border[1], eg or P.border[2], eb or P.border[3], ea or P.border[4])
+end
+
+local function MakeFlatBtn(parent, text, w, h)
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    btn:SetSize(w or 70, h or 22)
+    ApplyFlatBg(btn, P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4],
+                     P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+    local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetAllPoints()
+    fs:SetJustifyH("CENTER")
+    fs:SetTextColor(P.text[1], P.text[2], P.text[3])
+    fs:SetText(text)
+    btn.label = fs
+    btn:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], P.btnHov[4])
+        self:SetBackdropBorderColor(P.btnHBd[1], P.btnHBd[2], P.btnHBd[3], P.btnHBd[4])
+        fs:SetTextColor(1, 1, 1)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        if self:IsEnabled() then
+            self:SetBackdropColor(P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4])
+            self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+            fs:SetTextColor(P.text[1], P.text[2], P.text[3])
+        end
+    end)
+    local origSetEnabled = btn.SetEnabled
+    function btn:SetEnabled(v)
+        origSetEnabled(self, v)
+        if v then
+            self:SetBackdropColor(P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4])
+            self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+            fs:SetTextColor(P.text[1], P.text[2], P.text[3])
+        else
+            self:SetBackdropColor(0.08, 0.07, 0.12, 1)
+            self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], 0.4)
+            fs:SetTextColor(0.45, 0.42, 0.55)
+        end
+    end
+    return btn
+end
+
+-- Resize a flat button to fit its label text (runs on the next frame tick).
+local function AutoSizeBtn(btn, minW, pad)
+    C_Timer.After(0, function()
+        local w = btn.label:GetStringWidth()
+        if w > 0 then btn:SetWidth(math.max(minW or 40, w + (pad or 22))) end
+    end)
+end
+
+-- Forward ref: defined after notifFrame is created below.
+local ShowNotifPreview
+
+-------------------------------------------------------------------------------
+-- Main frame
+-------------------------------------------------------------------------------
+
+frame = CreateFrame("Frame", "PIHelperFrame", UIParent, "BackdropTemplate")
 frame:SetSize(290, 420)
 frame:SetPoint("CENTER")
 frame:SetMovable(true)
 frame:SetResizable(true)
 frame:SetResizeBounds(200, 150)
 frame:EnableMouse(true)
-frame:RegisterForDrag("LeftButton")
-frame:SetScript("OnDragStart", frame.StartMoving)
-frame:SetScript("OnDragStop", function()
+ApplyFlatBg(frame, P.bg[1], P.bg[2], P.bg[3], P.bg[4])
+frame:Hide()
+
+-- Header strip
+local headerBar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+headerBar:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -1)
+headerBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+headerBar:SetHeight(HEADER_H)
+ApplyFlatBg(headerBar, P.header[1], P.header[2], P.header[3], P.header[4],
+                        P.header[1], P.header[2], P.header[3], 0)
+
+local accentLine = frame:CreateTexture(nil, "ARTWORK")
+accentLine:SetHeight(2)
+accentLine:SetColorTexture(P.accent[1], P.accent[2], P.accent[3], 1)
+accentLine:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -(HEADER_H + 1))
+accentLine:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -(HEADER_H + 1))
+
+-- PI spell icon in header
+local headerIcon = headerBar:CreateTexture(nil, "OVERLAY")
+headerIcon:SetSize(18, 18)
+headerIcon:SetPoint("LEFT", headerBar, "LEFT", 10, 0)
+headerIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+C_Timer.After(0, function()
+    local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
+                     or GetSpellTexture(PI_SPELL_ID)
+    if iconPath then headerIcon:SetTexture(iconPath) end
+end)
+
+local titleText = headerBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+titleText:SetPoint("CENTER", headerBar, "CENTER", 0, 0)
+titleText:SetTextColor(P.title[1], P.title[2], P.title[3])
+titleText:SetText(L.TITLE)
+
+local closeBtn = CreateFrame("Button", nil, headerBar, "BackdropTemplate")
+closeBtn:SetSize(24, 24)
+closeBtn:SetPoint("RIGHT", headerBar, "RIGHT", -6, 0)
+local closeBg = closeBtn:CreateTexture(nil, "BACKGROUND")
+closeBg:SetAllPoints()
+closeBg:SetColorTexture(0.5, 0.1, 0.1, 0)
+local closeLbl = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+closeLbl:SetAllPoints()
+closeLbl:SetJustifyH("CENTER")
+closeLbl:SetText("x")
+closeLbl:SetTextColor(0.55, 0.45, 0.70)
+closeBtn:SetScript("OnEnter", function()
+    closeBg:SetColorTexture(0.5, 0.1, 0.1, 0.7)
+    closeLbl:SetTextColor(1, 0.35, 0.35)
+end)
+closeBtn:SetScript("OnLeave", function()
+    closeBg:SetColorTexture(0.5, 0.1, 0.1, 0)
+    closeLbl:SetTextColor(0.55, 0.45, 0.70)
+end)
+closeBtn:SetScript("OnClick", function() frame:Hide() end)
+
+-- Drag via header
+headerBar:EnableMouse(true)
+headerBar:RegisterForDrag("LeftButton")
+headerBar:SetScript("OnDragStart", function() frame:StartMoving() end)
+headerBar:SetScript("OnDragStop",  function()
     frame:StopMovingOrSizing()
     SaveFrameLayout()
 end)
-frame:SetBackdrop({
-    bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    edgeSize = 16,
-    insets   = { left = 4, right = 4, top = 4, bottom = 4 },
-})
-frame:SetBackdropColor(0.05, 0.05, 0.1, 0.92)
-frame:SetBackdropBorderColor(0.4, 0.4, 0.6)
-frame:Hide()
 
-local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -10)
-title:SetJustifyH("LEFT")
-title:SetText("|cff00ff96" .. L.TITLE .. "|r")
+-- Button strip (below header)
+local btnBar = CreateFrame("Frame", nil, frame)
+btnBar:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -(HEADER_H + 2))
+btnBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -(HEADER_H + 2))
+btnBar:SetHeight(BTNBAR_H)
 
-local closeBtn = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 2, 2)
-closeBtn:SetScript("OnClick", function() frame:Hide() end)
+local reInspectBtn = MakeFlatBtn(btnBar, L.BTN_REINSPECT, nil, 20)
+reInspectBtn:SetPoint("RIGHT", btnBar, "RIGHT", -4, 0)
+AutoSizeBtn(reInspectBtn)
+reInspectBtn:SetScript("OnClick", function()
+    wipe(specCache)
+    wipe(ilvlCache)
+    CachePlayerSpec()
+    QueueInspects()
+    print("|cff00ff96PI Helper:|r " .. L.MSG_REINSPECTING)
+end)
 
+local notifToggleBtn = MakeFlatBtn(btnBar, L.BTN_ALERT_POS, nil, 20)
+notifToggleBtn:SetPoint("RIGHT", reInspectBtn, "LEFT", -4, 0)
+AutoSizeBtn(notifToggleBtn)
+notifToggleBtn:SetScript("OnClick", function()
+    if notifFrame:IsShown() and notifFrame.isPreview then
+        notifFrame.isPreview = false
+        notifFrame:Hide()
+    else
+        ShowNotifPreview()
+    end
+end)
+
+local resetBtn = MakeFlatBtn(btnBar, L.BTN_RESET, nil, 20)
+resetBtn:SetPoint("RIGHT", notifToggleBtn, "LEFT", -4, 0)
+AutoSizeBtn(resetBtn)
+resetBtn:SetScript("OnClick", function() ResetPITarget() end)
+
+-- After all three buttons have auto-sized (next tick), lock the frame's
+-- minimum width so the button bar can never clip outside the frame edge.
+C_Timer.After(0, function()
+    local minW = math.ceil(
+        resetBtn:GetWidth() + notifToggleBtn:GetWidth() + reInspectBtn:GetWidth()
+        + 4   -- right edge padding
+        + 4 + 4  -- two gaps between buttons
+        + 8   -- left edge breathing room
+    )
+    frame:SetResizeBounds(minW, 150)
+    if frame:GetWidth() < minW then frame:SetWidth(minW) end
+end)
+
+local btnSep = frame:CreateTexture(nil, "ARTWORK")
+btnSep:SetHeight(1)
+btnSep:SetColorTexture(P.sep[1], P.sep[2], P.sep[3], P.sep[4])
+btnSep:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -(HEADER_H + 2 + BTNBAR_H))
+btnSep:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -(HEADER_H + 2 + BTNBAR_H))
+
+-- Footer strip
+local footerBar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+footerBar:SetPoint("BOTTOMLEFT",  frame, "BOTTOMLEFT",  1, 1)
+footerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
+footerBar:SetHeight(FOOTER_H)
+ApplyFlatBg(footerBar, P.footer[1], P.footer[2], P.footer[3], P.footer[4],
+                        P.footer[1], P.footer[2], P.footer[3], 0)
+
+local footerLine = frame:CreateTexture(nil, "ARTWORK")
+footerLine:SetHeight(1)
+footerLine:SetColorTexture(P.sep[1], P.sep[2], P.sep[3], P.sep[4])
+footerLine:SetPoint("BOTTOMLEFT",  frame, "BOTTOMLEFT",  1, FOOTER_H + 1)
+footerLine:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, FOOTER_H + 1)
+
+-- Scroll list
+local LIST_TOP  = HEADER_H + 2 + BTNBAR_H + 1
+local TRACK_W   = 4
+local THUMB_MIN = 20
+
+local scrollFrame = CreateFrame("ScrollFrame", nil, frame)
+scrollFrame:SetPoint("TOPLEFT",     frame, "TOPLEFT",     1,              -LIST_TOP)
+scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(TRACK_W + 6), FOOTER_H + 2)
+scrollFrame:EnableMouseWheel(true)
+
+-- Thin scrollbar track
+local sbTrack = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+sbTrack:SetWidth(TRACK_W)
+sbTrack:SetPoint("TOPRIGHT",    frame, "TOPRIGHT",    -(3),          -LIST_TOP)
+sbTrack:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(3),          FOOTER_H + 2)
+ApplyFlatBg(sbTrack, 0.10, 0.10, 0.15, 1, 0.10, 0.10, 0.15, 0)
+
+local sbThumb = CreateFrame("Frame", nil, sbTrack, "BackdropTemplate")
+sbThumb:SetWidth(TRACK_W)
+ApplyFlatBg(sbThumb, P.border[1], P.border[2], P.border[3], 1,
+                     P.border[1], P.border[2], P.border[3], 0)
+sbThumb:Hide()
+
+local content  -- forward-declared so UpdateScrollThumb can close over it
+
+local function UpdateScrollThumb()
+    local contentH = content:GetHeight()
+    local viewH    = scrollFrame:GetHeight()
+    if contentH <= viewH then sbThumb:Hide(); return end
+    sbThumb:Show()
+    local trackH  = sbTrack:GetHeight()
+    local thumbH  = math.max(THUMB_MIN, trackH * (viewH / contentH))
+    sbThumb:SetHeight(thumbH)
+    local maxScroll = scrollFrame:GetVerticalScrollRange()
+    local frac      = maxScroll > 0 and (scrollFrame:GetVerticalScroll() / maxScroll) or 0
+    sbThumb:ClearAllPoints()
+    sbThumb:SetPoint("TOP", sbTrack, "TOP", 0, -frac * (trackH - thumbH))
+end
+
+scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+    local max = self:GetVerticalScrollRange()
+    local new = math.max(0, math.min(max, self:GetVerticalScroll() - delta * 20))
+    self:SetVerticalScroll(new)
+    UpdateScrollThumb()
+end)
+
+content = CreateFrame("Frame", nil, scrollFrame)
+content:SetHeight(1)
+scrollFrame:SetScrollChild(content)
+
+local function SyncContentWidth()
+    content:SetWidth(scrollFrame:GetWidth())
+end
+scrollFrame:SetScript("OnSizeChanged", function()
+    SyncContentWidth()
+    UpdateScrollThumb()
+    if frame:IsShown() then frame.Refresh() end
+end)
+
+-- Autopick toggle
+local CHK = 14
+local autopickCheck = CreateFrame("Button", "PIHelperAutopick", footerBar, "BackdropTemplate")
+autopickCheck:SetSize(CHK, CHK)
+autopickCheck:SetPoint("LEFT", footerBar, "LEFT", 10, 0)
+ApplyFlatBg(autopickCheck, P.chkBg[1], P.chkBg[2], P.chkBg[3], P.chkBg[4],
+                            P.chkBd[1], P.chkBd[2], P.chkBd[3], P.chkBd[4])
+
+local chkMark = autopickCheck:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+chkMark:SetAllPoints()
+chkMark:SetJustifyH("CENTER")
+chkMark:SetJustifyV("MIDDLE")
+
+local chkChecked = false
+function autopickCheck:GetChecked() return chkChecked end
+function autopickCheck:SetChecked(v)
+    chkChecked = v
+    if v then
+        chkMark:SetText("|cff33FF66v|r")
+        autopickCheck:SetBackdropBorderColor(P.chkOn[1], P.chkOn[2], P.chkOn[3], P.chkOn[4])
+    else
+        chkMark:SetText("")
+        autopickCheck:SetBackdropBorderColor(P.chkBd[1], P.chkBd[2], P.chkBd[3], P.chkBd[4])
+    end
+end
+autopickCheck:SetScript("OnClick", function()
+    autopickCheck:SetChecked(not chkChecked)
+    PIHelperDB.autopick = chkChecked
+    if chkChecked then TryAutopick() end
+end)
+autopickCheck:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(0.14, 0.14, 0.22, 0.95)
+end)
+autopickCheck:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(P.chkBg[1], P.chkBg[2], P.chkBg[3], P.chkBg[4])
+end)
+
+local chkLabelBtn = CreateFrame("Button", nil, footerBar)
+chkLabelBtn:SetPoint("LEFT", autopickCheck, "RIGHT", 5, 0)
+local chkLabel = chkLabelBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+chkLabel:SetAllPoints()
+chkLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
+chkLabel:SetText(L.CHK_AUTOPICK)
+chkLabelBtn:SetSize(chkLabel:GetStringWidth() + 2, CHK)
+chkLabelBtn:SetScript("OnClick", function()
+    autopickCheck:SetChecked(not chkChecked)
+    PIHelperDB.autopick = chkChecked
+    if chkChecked then TryAutopick() end
+end)
+chkLabelBtn:SetScript("OnEnter", function() chkLabel:SetTextColor(1, 0.95, 1) end)
+chkLabelBtn:SetScript("OnLeave", function() chkLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3]) end)
+C_Timer.After(0, function()
+    chkLabelBtn:SetWidth(math.max(10, chkLabel:GetStringWidth() + 2))
+end)
+
+local statusLabel = footerBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+statusLabel:SetPoint("RIGHT", footerBar, "RIGHT", -10, 0)
+statusLabel:SetJustifyH("RIGHT")
+statusLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
+statusLabel:SetText(L.STATUS_NONE)
+
+-- Resize grip
 local resizeGrip = CreateFrame("Button", nil, frame)
 resizeGrip:SetSize(16, 16)
 resizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
@@ -387,107 +766,72 @@ resizeGrip:SetScript("OnMouseUp",   function()
     frame.Refresh()
 end)
 
--- Size a button to its label width so text never clips.
-local function FitButton(btn, minWidth)
-    btn:SetHeight(22)
-    local fs = btn:GetFontString()
-    local w = fs and fs:GetStringWidth() or 0
-    btn:SetWidth(math.max(minWidth or 60, w + 24))
-end
-
--- Re-inspect button
-local reInspectBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-reInspectBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -8)
-reInspectBtn:SetText(L.BTN_REINSPECT)
-FitButton(reInspectBtn)
-reInspectBtn:SetScript("OnClick", function()
-    wipe(specCache)
-    wipe(ilvlCache)
-    CachePlayerSpec()
-    QueueInspects()
-    print("|cff00ff96PI Helper:|r " .. L.MSG_REINSPECTING)
-end)
-
-local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -36)
-scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 40)
-
-local content = CreateFrame("Frame", nil, scrollFrame)
-content:SetHeight(1)
-scrollFrame:SetScrollChild(content)
-
--- Keep content width in sync with the scroll frame so rows always fill 100%.
-local function SyncContentWidth()
-    content:SetWidth(scrollFrame:GetWidth())
-end
-scrollFrame:SetScript("OnSizeChanged", function()
-    SyncContentWidth()
-    if frame:IsShown() then frame.Refresh() end
-end)
-
-local autopickCheck = CreateFrame("CheckButton", "PIHelperAutopick", frame, "UICheckButtonTemplate")
-autopickCheck:SetSize(24, 24)
-autopickCheck:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 8, 6)
-autopickCheck.text:SetText(L.CHK_AUTOPICK)
-autopickCheck:SetScript("OnClick", function(self)
-    PIHelperDB.autopick = self:GetChecked() and true or false
-    if PIHelperDB.autopick then TryAutopick() end
-end)
-
-local resetBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-resetBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 6)
-resetBtn:SetText(L.BTN_RESET)
-FitButton(resetBtn)
-resetBtn:SetScript("OnClick", function() ResetPITarget() end)
-
-local statusLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-statusLabel:SetPoint("BOTTOM", frame, "BOTTOM", 0, 12)
-statusLabel:SetText(L.STATUS_NONE)
+-------------------------------------------------------------------------------
+-- Roster rows
+-------------------------------------------------------------------------------
 
 local rows = {}
 
 local function MakeRow(index)
     local btn = CreateFrame("Button", nil, content)
-    btn:SetHeight(24)
-    btn:SetPoint("TOPLEFT",  content, "TOPLEFT",  0,  -(index - 1) * 26)
-    btn:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0,  -(index - 1) * 26)
-    btn:SetHighlightTexture("Interface/QuestFrame/UI-QuestTitleHighlight", "ADD")
+    btn:SetHeight(ROW_H)
+    btn:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -(index - 1) * ROW_H)
+    btn:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -(index - 1) * ROW_H)
 
-    -- Fixed-width left columns
+    if index % 2 == 0 then
+        local rowBg = btn:CreateTexture(nil, "BACKGROUND")
+        rowBg:SetAllPoints()
+        rowBg:SetColorTexture(0, 0, 0, 0.12)
+    end
+
+    btn:SetHighlightTexture("Interface/Buttons/WHITE8X8")
+    btn:GetHighlightTexture():SetVertexColor(1, 1, 1, 0.06)
+
+    local classIcon = btn:CreateTexture(nil, "ARTWORK")
+    classIcon:SetSize(ROW_H - 4, ROW_H - 4)  -- 22x22 for ROW_H=26
+    classIcon:SetPoint("LEFT", btn, "LEFT", 3, 0)
+    btn.classIcon = classIcon
+
     local rank = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    rank:SetPoint("LEFT", btn, "LEFT", 4, 0)
-    rank:SetWidth(20)
+    rank:SetPoint("LEFT", classIcon, "RIGHT", 3, 0)
+    rank:SetWidth(16)
+    rank:SetJustifyH("RIGHT")
     btn.rankText = rank
 
+    local addonDot = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    addonDot:SetPoint("LEFT", rank, "RIGHT", 2, 0)
+    addonDot:SetWidth(22)
+    addonDot:SetJustifyH("LEFT")
+    btn.addonDot = addonDot
+
     local nameText = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    nameText:SetPoint("LEFT", rank, "RIGHT", 2, 0)
-    nameText:SetWidth(80)
+    nameText:SetPoint("LEFT", addonDot, "RIGHT", 2, 0)
+    nameText:SetWidth(60)
+    nameText:SetJustifyH("LEFT")
     btn.nameText = nameText
 
-    -- Fixed-width right columns (anchored from the right edge)
-    local marker = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    marker:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
-    marker:SetWidth(12)
-    btn.marker = marker
-
     local ilvlText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    ilvlText:SetPoint("RIGHT", marker, "LEFT", -2, 0)
-    ilvlText:SetWidth(32)
+    ilvlText:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
+    ilvlText:SetWidth(30)
     ilvlText:SetJustifyH("RIGHT")
     btn.ilvlText = ilvlText
 
+    local marker = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    marker:SetPoint("RIGHT", ilvlText, "LEFT", -2, 0)
+    marker:SetWidth(10)
+    btn.marker = marker
+
     local levelText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    levelText:SetPoint("RIGHT", ilvlText, "LEFT", -2, 0)
-    levelText:SetWidth(24)
+    levelText:SetPoint("RIGHT", marker, "LEFT", -4, 0)
+    levelText:SetWidth(22)
     levelText:SetJustifyH("RIGHT")
     btn.levelText = levelText
 
-    -- Spec column stretches between nameText and levelText
     local specText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    specText:SetPoint("LEFT",  nameText,  "RIGHT", 4, 0)
+    specText:SetPoint("LEFT",  nameText,  "RIGHT", 4,  0)
     specText:SetPoint("RIGHT", levelText, "LEFT",  -4, 0)
     specText:SetJustifyH("LEFT")
-    specText:SetTextColor(0.7, 0.7, 0.7)
+    specText:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
     btn.specText = specText
 
     btn:SetScript("OnClick", function()
@@ -508,24 +852,30 @@ end
 
 function frame.Refresh()
     SyncContentWidth()
-    local roster = GetSortedRoster()
+    local roster     = GetSortedRoster()
     local lastTarget = PIHelperDB and PIHelperDB.lastTarget
 
-    -- Context-sensitive button states
     resetBtn:SetEnabled(lastTarget ~= nil)
     reInspectBtn:SetEnabled(GetNumGroupMembers() > 0)
 
+    if lastTarget then
+        statusLabel:SetText(L.STATUS_TARGET .. "|cff00ff96" .. lastTarget .. "|r")
+    else
+        statusLabel:SetText(L.STATUS_NONE)
+    end
+
     for _, r in ipairs(rows) do r:Hide() end
-    content:SetHeight(math.max(1, #roster * 26))
+    content:SetHeight(math.max(1, #roster * ROW_H))
 
     for i, entry in ipairs(roster) do
         local row = GetRow(i)
         row.memberName = entry.name
 
-        row.rankText:SetText("|cff888888" .. i .. ".|r")
+        row.rankText:SetText("|cff555566" .. i .. ".|r")
 
         local unit = GetUnitForName(entry.name)
-        local _, _, classFile = unit and UnitClass(unit) or UnitClass("player")
+        local _, classFile
+        if unit then _, classFile = UnitClass(unit) end
         local cc = classFile and RAID_CLASS_COLORS[classFile]
         if cc then
             row.nameText:SetTextColor(cc.r, cc.g, cc.b)
@@ -534,41 +884,47 @@ function frame.Refresh()
         end
         row.nameText:SetText(entry.name)
 
+        local atlas = classFile and CLASS_ATLAS[classFile]
+        if atlas then
+            row.classIcon:SetAtlas(atlas)
+            row.classIcon:SetAlpha(1)
+        else
+            row.classIcon:SetTexture(nil)
+        end
+
+        if addonUsers[entry.name] then
+            row.addonDot:SetText("|cff00ff96[P]|r")
+            row.addonDot:SetAlpha(1)
+        else
+            row.addonDot:SetText("")
+        end
+
         if entry.specID then
-            local prio = SPEC_PRIORITY[entry.specID]
+            local prio  = SPEC_PRIORITY[entry.specID]
             local sname = SPEC_NAME[entry.specID] or ("Spec " .. entry.specID)
-            if prio then
-                row.specText:SetText("|cffaaddaa" .. sname .. "|r")
-            else
-                row.specText:SetText("|cffaaaaaa" .. sname .. "|r")
-            end
+            row.specText:SetText(prio
+                and ("|cff88bb88" .. sname .. "|r")
+                or  ("|cff888888" .. sname .. "|r"))
         else
-            row.specText:SetText("|cff666666...|r")
+            row.specText:SetText("|cff444455...|r")
         end
 
-        if entry.level and entry.level > 0 then
-            row.levelText:SetText("|cffcccccc" .. entry.level .. "|r")
-        else
-            row.levelText:SetText("|cff666666-|r")
-        end
+        row.levelText:SetText((entry.level and entry.level > 0)
+            and ("|cff999999" .. entry.level .. "|r")
+            or  "|cff444455-|r")
 
-        if entry.ilvl then
-            row.ilvlText:SetText("|cffffd700" .. entry.ilvl .. "|r")
-        else
-            row.ilvlText:SetText("|cff666666-|r")
-        end
+        row.ilvlText:SetText(entry.ilvl
+            and ("|cffffd700" .. entry.ilvl .. "|r")
+            or  "|cff444455-|r")
 
-        if entry.name == lastTarget then
-            row.marker:SetText("|cff00ff96>|r")
-        else
-            row.marker:SetText("")
-        end
+        row.marker:SetText(entry.name == lastTarget and "|cff00ff96>|r" or "")
 
         row:Show()
     end
+
+    UpdateScrollThumb()
 end
 
--- Both defined here so frame, statusLabel, and macro helpers are all in scope.
 ResetPITarget = function()
     UpdateMacroTarget("focus")
     PIHelperDB.lastTarget = nil
@@ -602,8 +958,8 @@ local function CanCastPI()
     return IsSpellKnown(PI_SPELL_ID)
 end
 
-local notifFrame = CreateFrame("Frame", "PIHelperNotif", UIParent)
-notifFrame:SetSize(120, 160)
+notifFrame = CreateFrame("Frame", "PIHelperNotif", UIParent, "BackdropTemplate")
+notifFrame:SetSize(140, 170)
 notifFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
 notifFrame:SetFrameStrata("HIGH")
 notifFrame:SetMovable(true)
@@ -614,16 +970,15 @@ notifFrame:SetScript("OnDragStop", function()
     notifFrame:StopMovingOrSizing()
     SaveNotifLayout()
 end)
+-- No background: notifFrame is intentionally transparent. Do NOT call ApplyFlatBg here.
 notifFrame.isPreview = false
 notifFrame:Hide()
 
--- Spell icon
 local notifIcon = notifFrame:CreateTexture(nil, "ARTWORK")
 notifIcon:SetSize(90, 90)
-notifIcon:SetPoint("TOP", notifFrame, "TOP", 0, 0)
+notifIcon:SetPoint("TOP", notifFrame, "TOP", 0, -10)
 notifIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 
--- Pulsing glow on the icon only
 local iconShimmer = notifFrame:CreateTexture(nil, "OVERLAY")
 iconShimmer:SetSize(90, 90)
 iconShimmer:SetPoint("CENTER", notifIcon, "CENTER")
@@ -639,28 +994,24 @@ sPulse:SetToAlpha(0.8)
 sPulse:SetDuration(0.5)
 shimAnim:Play()
 
--- Requester name
 local notifName = notifFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-notifName:SetPoint("TOP", notifIcon, "BOTTOM", 0, -8)
-notifName:SetWidth(180)
+notifName:SetPoint("TOP", notifIcon, "BOTTOM", 0, -10)
+notifName:SetWidth(200)
 notifName:SetJustifyH("CENTER")
 
--- Sub line
 local notifSub = notifFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 notifSub:SetPoint("TOP", notifName, "BOTTOM", 0, -4)
 notifSub:SetTextColor(1.0, 0.82, 0.0)
-
 
 local function ShowPIRequest(senderName)
     local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
                      or GetSpellTexture(PI_SPELL_ID)
     if iconPath then notifIcon:SetTexture(iconPath) end
-
     notifSub:SetText(L.NOTIF_REQUESTS:format(GetPISpellName() or "Power Infusion"))
 
-    -- Class-colour the name if we can find the unit
     local unit = GetUnitForName(senderName)
-    local _, _, classFile = unit and UnitClass(unit) or nil, nil, nil
+    local _, classFile
+    if unit then _, classFile = UnitClass(unit) end
     local cc = classFile and RAID_CLASS_COLORS[classFile]
     if cc then
         notifName:SetTextColor(cc.r, cc.g, cc.b)
@@ -669,21 +1020,21 @@ local function ShowPIRequest(senderName)
     end
     notifName:SetText(senderName)
 
-    notifFrame.requester  = senderName
-    notifFrame.isPreview  = false
+    notifFrame.requester = senderName
+    notifFrame.isPreview = false
     notifFrame:Show()
 
     if notifFrame.dismissTimer then notifFrame.dismissTimer:Cancel() end
     notifFrame.dismissTimer = C_Timer.NewTimer(8, function()
         notifFrame.dismissTimer = nil
-        notifFrame.isPreview = false
+        notifFrame.isPreview    = false
         notifFrame:Hide()
     end)
 
     PlaySound(SOUNDKIT.RAID_WARNING)
 end
 
-local function ShowNotifPreview()
+ShowNotifPreview = function()
     local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
                      or GetSpellTexture(PI_SPELL_ID)
     if iconPath then notifIcon:SetTexture(iconPath) end
@@ -694,20 +1045,6 @@ local function ShowNotifPreview()
     notifFrame.isPreview = true
     notifFrame:Show()
 end
-
--- Toggle button on the main frame to preview the notification position.
-local notifToggleBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-notifToggleBtn:SetPoint("TOPRIGHT", reInspectBtn, "TOPLEFT", -4, 0)
-notifToggleBtn:SetText(L.BTN_ALERT_POS)
-FitButton(notifToggleBtn)
-notifToggleBtn:SetScript("OnClick", function()
-    if notifFrame:IsShown() and notifFrame.isPreview then
-        notifFrame.isPreview = false
-        notifFrame:Hide()
-    else
-        ShowNotifPreview()
-    end
-end)
 
 frame:HookScript("OnHide", function()
     if notifFrame.isPreview then
@@ -725,12 +1062,8 @@ local function SendPIRequest()
     if IsInRaid()                         then channel = "RAID"
     elseif GetNumGroupMembers() > 0       then channel = "PARTY"
     end
-    if not channel then
-        print("|cffff4444PI Helper:|r " .. L.MSG_NOT_IN_GROUP)
-        return
-    end
+    if not channel then return end
     C_ChatInfo.SendAddonMessage(MSG_PREFIX, MSG_REQUEST, channel)
-    print("|cff00ff96PI Helper:|r " .. L.MSG_PI_REQUESTED)
 end
 
 -------------------------------------------------------------------------------
@@ -746,6 +1079,7 @@ eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 eventFrame:RegisterEvent("CHAT_MSG_ADDON")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     local arg1, arg2, arg3, arg4 = ...
@@ -772,13 +1106,15 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         -- Macro list is ready at this point, safe to create if missing.
         local _, playerClass = UnitClass("player")
         if playerClass == "PRIEST" and GetMacroIndexByName(MACRO_NAME) == 0 then
-            local idx = CreateMacro(MACRO_NAME, "INV_Misc_QuestionMark", BuildResetMacroBody(), true)
+            local idx = CreatePIMacro(BuildResetMacroBody())
             if idx and idx > 0 then
                 print("|cff00ff96PI Helper:|r " .. L.MSG_MACRO_CREATED:format(MACRO_NAME))
             else
                 print("|cffff4444PI Helper:|r " .. L.MSG_MACRO_LIMIT:format(MACRO_NAME))
             end
         end
+        -- Announce to any existing group members that this addon is loaded.
+        ScheduleAnnounce()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         CachePlayerSpec()
@@ -788,6 +1124,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         PruneCacheToGroup()
         CachePlayerSpec()
         QueueInspects()
+        ScheduleAnnounce()
         local inGroup = GetNumGroupMembers() > 0
         if frame:IsShown() then
             frame.Refresh()
@@ -833,10 +1170,26 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "CHAT_MSG_ADDON" then
         -- arg1=prefix, arg2=message, arg3=channel, arg4=sender
-        if arg1 == MSG_PREFIX and arg2 == MSG_REQUEST and CanCastPI() then
-            local senderName = arg4 and (arg4:match("^([^%-]+)") or arg4)
-            if senderName and senderName ~= UnitName("player") then
-                ShowPIRequest(senderName)
+        if arg1 ~= MSG_PREFIX then return end
+        local senderName = arg4 and (arg4:match("^([^%-]+)") or arg4)
+        if not senderName or senderName == UnitName("player") then return end
+
+        if arg2 == MSG_REQUEST and CanCastPI() and senderName == GetMacroTarget() then
+            ShowPIRequest(senderName)
+        elseif arg2 == MSG_ANNOUNCE then
+            addonUsers[senderName] = true
+            if frame:IsShown() then frame.Refresh() end
+        end
+
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- arg1=unitToken, arg2=castGUID, arg3=spellID
+        if arg1 == "player" and arg3 == PI_SPELL_ID then
+            if notifFrame:IsShown() and not notifFrame.isPreview then
+                if notifFrame.dismissTimer then
+                    notifFrame.dismissTimer:Cancel()
+                    notifFrame.dismissTimer = nil
+                end
+                notifFrame:Hide()
             end
         end
     end
