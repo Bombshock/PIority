@@ -49,6 +49,10 @@ L.SOUND_QUEST_DONE      = "Quest Complete"
 L.SOUND_BOSS_WARNING    = "Boss Warning"
 L.SOUND_NONE            = "None"
 
+-- Snapshot of English defaults, used by screenshot mode to override any locale.
+ns.englishLocale = {}
+for k, v in pairs(L) do ns.englishLocale[k] = v end
+
 -- ============================================================
 -- German
 -- ============================================================

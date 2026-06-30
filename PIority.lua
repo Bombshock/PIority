@@ -110,36 +110,8 @@ local SCREENSHOT_ROSTER = {
     { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", level = 80, ilvl = 290 },
 }
 
-local ENGLISH_STRINGS = {
-    BTN_OPTIONS         = "Options",
-    BTN_REINSPECT       = "Re-inspect",
-    BTN_ALERT_POS       = "Alert pos",
-    BTN_RESET           = "Reset",
-    CHK_AUTOPICK        = "Auto-pick",
-    STATUS_NONE         = "No target selected",
-    STATUS_TARGET       = "Target: ",
-    STATUS_AUTO         = "Auto: ",
-    NOTIF_REQUESTS      = "requests %s",
-    NOTIF_PREVIEW       = "(preview)",
-    HELP_HEADER         = "PIority commands:",
-    HELP_TOGGLE         = "  /pi            - toggle roster window",
-    HELP_TARGET         = "  /pi target N   - update macro target directly",
-    HELP_HELP           = "  /pi help       - this message",
-    MSG_LOADED          = "loaded. Type |cffffff00/pi|r to open.",
-    MSG_MACRO_CREATED   = "Macro '%s' created.",
-    MSG_MACRO_LIMIT     = "Could not create macro '%s' - you may be at the macro limit.",
-    MSG_MACRO_UPDATED   = "Macro '%s' -> %s",
-    MSG_MACRO_NOT_FOUND = "Could not find the /cast [@...] line in '%s'. Update manually.",
-    MSG_MACRO_TARGETING = "Created macro '%s' targeting %s",
-    MSG_RESET           = "Target reset to @focus.",
-    MSG_REINSPECTING    = "Re-inspecting all members...",
-    MSG_PI_REQUESTED    = "PI requested.",
-    MSG_NOT_IN_GROUP    = "You must be in a group to request PI.",
-    MSG_USAGE_TARGET    = "Usage: /pi target <name>",
-}
-
 local function ApplyEnglishLocale()
-    for k, v in pairs(ENGLISH_STRINGS) do L[k] = v end
+    for k, v in pairs(ns.englishLocale) do L[k] = v end
 end
 
 -------------------------------------------------------------------------------
