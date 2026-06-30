@@ -101,6 +101,48 @@ local SPEC_NAME = {
 }
 
 -------------------------------------------------------------------------------
+-- Screenshot mode — fake roster injected for promo screenshots
+-------------------------------------------------------------------------------
+
+local SCREENSHOT_ROSTER = {
+    { name = "DemoAlpha",   specID = 63,  classFile = "MAGE",        level = 80, ilvl = 290 },
+    { name = "DemoBravo",   specID = 266, classFile = "WARLOCK",     level = 80, ilvl = 290 },
+    { name = "DemoCharlie", specID = 258, classFile = "PRIEST",      level = 80, ilvl = 290 },
+    { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", level = 80, ilvl = 290 },
+}
+
+local ENGLISH_STRINGS = {
+    BTN_REINSPECT       = "Re-inspect",
+    BTN_ALERT_POS       = "Alert pos",
+    BTN_RESET           = "Reset",
+    CHK_AUTOPICK        = "Auto-pick",
+    STATUS_NONE         = "No target selected",
+    STATUS_TARGET       = "Target: ",
+    STATUS_AUTO         = "Auto: ",
+    NOTIF_REQUESTS      = "requests %s",
+    NOTIF_PREVIEW       = "(preview)",
+    HELP_HEADER         = "PIority commands:",
+    HELP_TOGGLE         = "  /pi            - toggle roster window",
+    HELP_TARGET         = "  /pi target N   - update macro target directly",
+    HELP_HELP           = "  /pi help       - this message",
+    MSG_LOADED          = "loaded. Type |cffffff00/pi|r to open.",
+    MSG_MACRO_CREATED   = "Macro '%s' created.",
+    MSG_MACRO_LIMIT     = "Could not create macro '%s' - you may be at the macro limit.",
+    MSG_MACRO_UPDATED   = "Macro '%s' -> %s",
+    MSG_MACRO_NOT_FOUND = "Could not find the /cast [@...] line in '%s'. Update manually.",
+    MSG_MACRO_TARGETING = "Created macro '%s' targeting %s",
+    MSG_RESET           = "Target reset to @focus.",
+    MSG_REINSPECTING    = "Re-inspecting all members...",
+    MSG_PI_REQUESTED    = "PI requested.",
+    MSG_NOT_IN_GROUP    = "You must be in a group to request PI.",
+    MSG_USAGE_TARGET    = "Usage: /pi target <name>",
+}
+
+local function ApplyEnglishLocale()
+    for k, v in pairs(ENGLISH_STRINGS) do L[k] = v end
+end
+
+-------------------------------------------------------------------------------
 -- Member cache (populated at runtime; persisted via PIorityDB on load)
 -------------------------------------------------------------------------------
 local specCache    = {}  -- [name] = specID
@@ -325,6 +367,10 @@ local ResetPITarget  -- defined after UI elements are in scope
 -------------------------------------------------------------------------------
 
 local function GetSortedRoster()
+    if PIorityDB and PIorityDB.screenshotMode then
+        return SCREENSHOT_ROSTER
+    end
+
     local numMembers = GetNumGroupMembers()
     local members = {}
 
@@ -805,7 +851,7 @@ local function MakeRow(index)
 
     local nameText = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     nameText:SetPoint("LEFT", addonDot, "RIGHT", 2, 0)
-    nameText:SetWidth(60)
+    nameText:SetWidth(90)  -- default; overwritten each Refresh
     nameText:SetJustifyH("LEFT")
     btn.nameText = nameText
 
@@ -854,8 +900,13 @@ function frame.Refresh()
     local roster     = GetSortedRoster()
     local lastTarget = PIorityDB and PIorityDB.lastTarget
 
-    resetBtn:SetEnabled(lastTarget ~= nil)
-    reInspectBtn:SetEnabled(GetNumGroupMembers() > 0)
+    -- Name column: 50% of the space not consumed by fixed columns, min 90px.
+    -- Fixed left (icon+rank+dot+gaps)=70, fixed right (ilvl+marker+level+gaps)=78, total=148.
+    local nameWidth = math.max(90, math.floor((scrollFrame:GetWidth() - 148) * 0.50))
+
+    local inScreenshot = PIorityDB and PIorityDB.screenshotMode
+    resetBtn:SetEnabled(not inScreenshot and lastTarget ~= nil)
+    reInspectBtn:SetEnabled(not inScreenshot and GetNumGroupMembers() > 0)
 
     if lastTarget then
         statusLabel:SetText(L.STATUS_TARGET .. "|cff00ff96" .. lastTarget .. "|r")
@@ -869,12 +920,14 @@ function frame.Refresh()
     for i, entry in ipairs(roster) do
         local row = GetRow(i)
         row.memberName = entry.name
+        row.nameText:SetWidth(nameWidth)
 
         row.rankText:SetText("|cff555566" .. i .. ".|r")
 
         local unit = GetUnitForName(entry.name)
         local _, classFile
         if unit then _, classFile = UnitClass(unit) end
+        classFile = classFile or entry.classFile  -- fallback for screenshot roster
         local cc = classFile and RAID_CLASS_COLORS[classFile]
         if cc then
             row.nameText:SetTextColor(cc.r, cc.g, cc.b)
@@ -1086,6 +1139,22 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         PIorityDB = PIorityDB or { lastTarget = nil }
         if PIorityDB.priority then PIorityDB.priority = nil end
 
+        -- Screenshot mode: force English and re-apply text to widgets already created.
+        if PIorityDB.screenshotMode then
+            ApplyEnglishLocale()
+            reInspectBtn.label:SetText(L.BTN_REINSPECT)
+            AutoSizeBtn(reInspectBtn)
+            notifToggleBtn.label:SetText(L.BTN_ALERT_POS)
+            AutoSizeBtn(notifToggleBtn)
+            resetBtn.label:SetText(L.BTN_RESET)
+            AutoSizeBtn(resetBtn)
+            chkLabel:SetText(L.CHK_AUTOPICK)
+            C_Timer.After(0, function()
+                chkLabelBtn:SetWidth(math.max(10, chkLabel:GetStringWidth() + 2))
+            end)
+            statusLabel:SetText(L.STATUS_NONE)
+        end
+
         -- Redirect caches to persisted subtables so writes survive reloads.
         PIorityDB.specCache = PIorityDB.specCache or {}
         PIorityDB.ilvlCache = PIorityDB.ilvlCache or {}
@@ -1112,8 +1181,15 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
                 print("|cffff4444PIority:|r " .. L.MSG_MACRO_LIMIT:format(MACRO_NAME))
             end
         end
-        -- Announce to any existing group members that this addon is loaded.
-        ScheduleAnnounce()
+        -- In screenshot mode open the window automatically with fake data.
+        if PIorityDB and PIorityDB.screenshotMode then
+            frame.Refresh()
+            frame:Show()
+            print("|cff00ff96PIority:|r |cffffff00[Screenshot mode active]|r  /pi screenshot off to exit")
+        else
+            -- Announce to any existing group members that this addon is loaded.
+            ScheduleAnnounce()
+        end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         CachePlayerSpec()
@@ -1210,7 +1286,20 @@ SlashCmdList["PIH"] = function(msg)
     local cmd, rest = msg:match("^(%S*)%s*(.*)")
     cmd = (cmd or ""):lower()
 
-    if cmd == "target" then
+    if cmd == "screenshot" then
+        if rest:lower() == "off" then
+            PIorityDB.screenshotMode = nil
+            print("|cff00ff96PIority:|r Screenshot mode disabled. Reloading UI...")
+            ReloadUI()
+        elseif not (PIorityDB and PIorityDB.screenshotMode) then
+            PIorityDB = PIorityDB or {}
+            PIorityDB.screenshotMode = true
+            print("|cff00ff96PIority:|r Screenshot mode enabled. Reloading UI...")
+            ReloadUI()
+        else
+            print("|cff00ff96PIority:|r Already in screenshot mode. Use |cffffff00/pi screenshot off|r to exit.")
+        end
+    elseif cmd == "target" then
         local name = rest:match("%S+")
         if name then
             UpdateMacroTarget(name)
@@ -1222,6 +1311,8 @@ SlashCmdList["PIH"] = function(msg)
         print(L.HELP_TOGGLE)
         print(L.HELP_TARGET)
         print(L.HELP_HELP)
+        print("  /pi screenshot     - enable screenshot mode (reloads UI)")
+        print("  /pi screenshot off - disable screenshot mode (reloads UI)")
     else
         if frame:IsShown() then
             frame:Hide()
