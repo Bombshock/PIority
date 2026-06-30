@@ -31,7 +31,6 @@ end
 
 -------------------------------------------------------------------------------
 -- Spec priority (lower number = higher priority).
--- "Devourer Demon Hunter" is not a real spec and has been omitted.
 -------------------------------------------------------------------------------
 local SPEC_PRIORITY = {
     [63]   = 1,   -- Fire Mage
@@ -112,6 +111,7 @@ local SCREENSHOT_ROSTER = {
 }
 
 local ENGLISH_STRINGS = {
+    BTN_OPTIONS         = "Options",
     BTN_REINSPECT       = "Re-inspect",
     BTN_ALERT_POS       = "Alert pos",
     BTN_RESET           = "Reset",
@@ -406,11 +406,57 @@ local function GetSortedRoster()
 end
 
 -------------------------------------------------------------------------------
+-- Sound options
+-------------------------------------------------------------------------------
+
+local SOUND_OPTIONS = {
+    { key = "RAID_WARNING",  labelKey = "SOUND_RAID_WARNING",  kit = SOUNDKIT.RAID_WARNING           },
+    { key = "PVP_QUEUE",     labelKey = "SOUND_PVP_QUEUE",     kit = SOUNDKIT.PVP_THROUGH_QUEUE      },
+    { key = "READY_CHECK",   labelKey = "SOUND_READY_CHECK",   kit = SOUNDKIT.READY_CHECK            },
+    { key = "WHISPER",       labelKey = "SOUND_WHISPER",       kit = SOUNDKIT.TELL_MESSAGE           },
+    { key = "COIN",          labelKey = "SOUND_COIN",          kit = SOUNDKIT.LOOT_WINDOW_COIN_SOUND },
+    { key = "ALARM",         labelKey = "SOUND_ALARM",         kit = SOUNDKIT.ALARM_CLOCK_WARNING_3  },
+    { key = "EPIC_LOOT",     labelKey = "SOUND_EPIC_LOOT",     kit = SOUNDKIT.UI_EPICLOOT_TOAST      },
+    { key = "QUEST_DONE",    labelKey = "SOUND_QUEST_DONE",    kit = SOUNDKIT.UI_AUTO_QUEST_COMPLETE  },
+    { key = "BOSS_WARNING",  labelKey = "SOUND_BOSS_WARNING",  kit = SOUNDKIT.RAID_BOSS_EMOTE_WARNING },
+    { key = "NONE",          labelKey = "SOUND_NONE",          kit = nil                             },
+}
+
+local function GetSoundLabel(key)
+    for _, opt in ipairs(SOUND_OPTIONS) do
+        if opt.key == key then return L[opt.labelKey] end
+    end
+    return L.SOUND_RAID_WARNING
+end
+
+local function PlayPISound()
+    if not PIorityDB then return end
+    local key = PIorityDB.soundKey or "RAID_WARNING"
+    for _, opt in ipairs(SOUND_OPTIONS) do
+        if opt.key == key then
+            if opt.kit then PlaySound(opt.kit) end
+            return
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+-- Glow options
+-------------------------------------------------------------------------------
+
+-- Glow control stored in ns so all closures share the same live reference.
+ns.glow = {}
+
+-------------------------------------------------------------------------------
 -- UI
 -------------------------------------------------------------------------------
 
 local frame       -- forward-declare so SaveFrameLayout/RestoreFrameLayout can close over it
 local notifFrame  -- same reason
+local optFrame    -- settings window
+
+-- Forward refs assigned when settings window is created
+local reInspectBtn, notifToggleBtn, resetBtn
 
 local function SaveFrameLayout()
     local point, _, relPoint, x, y = frame:GetPoint()
@@ -449,7 +495,7 @@ local function RestoreNotifLayout()
     end
 end
 
--- Colour palette (Keep Rollin style — purple/violet theme)
+-- Colour palette (purple/violet theme)
 local P = {
     bg     = { 0.07, 0.07, 0.11, 0.97 },
     header = { 0.13, 0.10, 0.22, 1.00 },
@@ -471,7 +517,6 @@ local P = {
 
 local HEADER_H = 32
 local FOOTER_H = 32
-local BTNBAR_H = 28
 local ROW_H    = 26
 
 local solidBD = {
@@ -529,13 +574,16 @@ end
 -- Resize a flat button to fit its label text (runs on the next frame tick).
 local function AutoSizeBtn(btn, minW, pad)
     C_Timer.After(0, function()
-        local w = btn.label:GetStringWidth()
+        local fs = btn.label or btn:GetFontString()
+        if not fs then return end
+        local w = fs:GetStringWidth()
         if w > 0 then btn:SetWidth(math.max(minW or 40, w + (pad or 22))) end
     end)
 end
 
--- Forward ref: defined after notifFrame is created below.
+-- Forward refs: defined after notifFrame is created below.
 local ShowNotifPreview
+local ShowPreviewWithSound
 
 -------------------------------------------------------------------------------
 -- Main frame
@@ -547,6 +595,7 @@ frame:SetPoint("CENTER")
 frame:SetMovable(true)
 frame:SetResizable(true)
 frame:SetResizeBounds(200, 150)
+frame:SetClampedToScreen(true)
 frame:EnableMouse(true)
 ApplyFlatBg(frame, P.bg[1], P.bg[2], P.bg[3], P.bg[4])
 frame:Hide()
@@ -580,6 +629,7 @@ local titleText = headerBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarg
 titleText:SetPoint("CENTER", headerBar, "CENTER", 0, 0)
 titleText:SetText("|cff8552ebPI|r|cffFFDC6Bority|r")
 
+-- Close button
 local closeBtn = CreateFrame("Button", nil, headerBar, "BackdropTemplate")
 closeBtn:SetSize(24, 24)
 closeBtn:SetPoint("RIGHT", headerBar, "RIGHT", -6, 0)
@@ -601,6 +651,35 @@ closeBtn:SetScript("OnLeave", function()
 end)
 closeBtn:SetScript("OnClick", function() frame:Hide() end)
 
+-- Options button (opens settings window), anchored left of the close button
+local optionsBtn = CreateFrame("Button", nil, headerBar, "BackdropTemplate")
+optionsBtn:SetSize(52, 22)
+optionsBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+local optionsBtnBg = optionsBtn:CreateTexture(nil, "BACKGROUND")
+optionsBtnBg:SetAllPoints()
+optionsBtnBg:SetColorTexture(0.12, 0.10, 0.20, 0)
+local optionsBtnLbl = optionsBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+optionsBtnLbl:SetAllPoints()
+optionsBtnLbl:SetJustifyH("CENTER")
+optionsBtnLbl:SetText("|cffb399dd" .. L.BTN_OPTIONS .. "|r")
+optionsBtn.label = optionsBtnLbl
+AutoSizeBtn(optionsBtn, 40, 24)
+optionsBtn:SetScript("OnEnter", function()
+    optionsBtnBg:SetColorTexture(0.25, 0.18, 0.40, 0.7)
+    optionsBtnLbl:SetTextColor(0.80, 0.65, 1.00)
+end)
+optionsBtn:SetScript("OnLeave", function()
+    optionsBtnBg:SetColorTexture(0.12, 0.10, 0.20, 0)
+    optionsBtnLbl:SetTextColor(0.70, 0.58, 0.88)
+end)
+optionsBtn:SetScript("OnClick", function()
+    if optFrame:IsShown() then
+        optFrame:Hide()
+    else
+        optFrame:Show()
+    end
+end)
+
 -- Drag via header
 headerBar:EnableMouse(true)
 headerBar:RegisterForDrag("LeftButton")
@@ -609,59 +688,6 @@ headerBar:SetScript("OnDragStop",  function()
     frame:StopMovingOrSizing()
     SaveFrameLayout()
 end)
-
--- Button strip (below header)
-local btnBar = CreateFrame("Frame", nil, frame)
-btnBar:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -(HEADER_H + 2))
-btnBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -(HEADER_H + 2))
-btnBar:SetHeight(BTNBAR_H)
-
-local reInspectBtn = MakeFlatBtn(btnBar, L.BTN_REINSPECT, nil, 20)
-reInspectBtn:SetPoint("RIGHT", btnBar, "RIGHT", -4, 0)
-AutoSizeBtn(reInspectBtn)
-reInspectBtn:SetScript("OnClick", function()
-    wipe(specCache)
-    wipe(ilvlCache)
-    CachePlayerSpec()
-    QueueInspects()
-    print("|cff00ff96PIority:|r " .. L.MSG_REINSPECTING)
-end)
-
-local notifToggleBtn = MakeFlatBtn(btnBar, L.BTN_ALERT_POS, nil, 20)
-notifToggleBtn:SetPoint("RIGHT", reInspectBtn, "LEFT", -4, 0)
-AutoSizeBtn(notifToggleBtn)
-notifToggleBtn:SetScript("OnClick", function()
-    if notifFrame:IsShown() and notifFrame.isPreview then
-        notifFrame.isPreview = false
-        notifFrame:Hide()
-    else
-        ShowNotifPreview()
-    end
-end)
-
-local resetBtn = MakeFlatBtn(btnBar, L.BTN_RESET, nil, 20)
-resetBtn:SetPoint("RIGHT", notifToggleBtn, "LEFT", -4, 0)
-AutoSizeBtn(resetBtn)
-resetBtn:SetScript("OnClick", function() ResetPITarget() end)
-
--- After all three buttons have auto-sized (next tick), lock the frame's
--- minimum width so the button bar can never clip outside the frame edge.
-C_Timer.After(0, function()
-    local minW = math.ceil(
-        resetBtn:GetWidth() + notifToggleBtn:GetWidth() + reInspectBtn:GetWidth()
-        + 4   -- right edge padding
-        + 4 + 4  -- two gaps between buttons
-        + 8   -- left edge breathing room
-    )
-    frame:SetResizeBounds(minW, 150)
-    if frame:GetWidth() < minW then frame:SetWidth(minW) end
-end)
-
-local btnSep = frame:CreateTexture(nil, "ARTWORK")
-btnSep:SetHeight(1)
-btnSep:SetColorTexture(P.sep[1], P.sep[2], P.sep[3], P.sep[4])
-btnSep:SetPoint("TOPLEFT",  frame, "TOPLEFT",  1, -(HEADER_H + 2 + BTNBAR_H))
-btnSep:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -(HEADER_H + 2 + BTNBAR_H))
 
 -- Footer strip
 local footerBar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -677,8 +703,8 @@ footerLine:SetColorTexture(P.sep[1], P.sep[2], P.sep[3], P.sep[4])
 footerLine:SetPoint("BOTTOMLEFT",  frame, "BOTTOMLEFT",  1, FOOTER_H + 1)
 footerLine:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, FOOTER_H + 1)
 
--- Scroll list
-local LIST_TOP  = HEADER_H + 2 + BTNBAR_H + 1
+-- Scroll list (starts directly below accent line, no button bar)
+local LIST_TOP  = HEADER_H + 3
 local TRACK_W   = 4
 local THUMB_MIN = 20
 
@@ -810,6 +836,247 @@ resizeGrip:SetScript("OnMouseUp",   function()
     SaveFrameLayout()
     frame.Refresh()
 end)
+
+-------------------------------------------------------------------------------
+-- Settings window
+-------------------------------------------------------------------------------
+
+optFrame = CreateFrame("Frame", "PIorityOptionsFrame", UIParent, "BackdropTemplate")
+optFrame:SetSize(310, 168)
+optFrame:SetPoint("TOPLEFT", frame, "TOPRIGHT", 6, 0)
+optFrame:SetMovable(true)
+optFrame:SetClampedToScreen(true)
+optFrame:EnableMouse(true)
+optFrame:RegisterForDrag("LeftButton")
+optFrame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+optFrame:SetScript("OnDragStop",  function(self) self:StopMovingOrSizing() end)
+optFrame:SetFrameStrata("HIGH")
+ApplyFlatBg(optFrame, P.bg[1], P.bg[2], P.bg[3], P.bg[4])
+optFrame:Hide()
+
+-- Settings header
+local optHeader = CreateFrame("Frame", nil, optFrame, "BackdropTemplate")
+optHeader:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  1, -1)
+optHeader:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -1, -1)
+optHeader:SetHeight(HEADER_H)
+ApplyFlatBg(optHeader, P.header[1], P.header[2], P.header[3], P.header[4],
+                        P.header[1], P.header[2], P.header[3], 0)
+
+local optAccent = optFrame:CreateTexture(nil, "ARTWORK")
+optAccent:SetHeight(2)
+optAccent:SetColorTexture(P.accent[1], P.accent[2], P.accent[3], 1)
+optAccent:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  1, -(HEADER_H + 1))
+optAccent:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -1, -(HEADER_H + 1))
+
+local optTitle = optHeader:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+optTitle:SetPoint("CENTER", optHeader, "CENTER", 0, 0)
+optTitle:SetText("|cffFFDC6B" .. L.OPT_TITLE .. "|r")
+
+local optCloseBtn = CreateFrame("Button", nil, optHeader, "BackdropTemplate")
+optCloseBtn:SetSize(24, 24)
+optCloseBtn:SetPoint("RIGHT", optHeader, "RIGHT", -6, 0)
+local optCloseBg = optCloseBtn:CreateTexture(nil, "BACKGROUND")
+optCloseBg:SetAllPoints()
+optCloseBg:SetColorTexture(0.5, 0.1, 0.1, 0)
+local optCloseLbl = optCloseBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+optCloseLbl:SetAllPoints()
+optCloseLbl:SetJustifyH("CENTER")
+optCloseLbl:SetText("x")
+optCloseLbl:SetTextColor(0.55, 0.45, 0.70)
+optCloseBtn:SetScript("OnEnter", function()
+    optCloseBg:SetColorTexture(0.5, 0.1, 0.1, 0.7)
+    optCloseLbl:SetTextColor(1, 0.35, 0.35)
+end)
+optCloseBtn:SetScript("OnLeave", function()
+    optCloseBg:SetColorTexture(0.5, 0.1, 0.1, 0)
+    optCloseLbl:SetTextColor(0.55, 0.45, 0.70)
+end)
+optCloseBtn:SetScript("OnClick", function() optFrame:Hide() end)
+
+optHeader:EnableMouse(true)
+optHeader:RegisterForDrag("LeftButton")
+optHeader:SetScript("OnDragStart", function() optFrame:StartMoving() end)
+optHeader:SetScript("OnDragStop",  function() optFrame:StopMovingOrSizing() end)
+optHeader:SetScript("OnMouseUp",   function() optFrame:StopMovingOrSizing() end)
+optFrame:SetScript("OnMouseUp",    function() optFrame:StopMovingOrSizing() end)
+
+-- Content area inside settings window
+local OPT_TOP = HEADER_H + 3  -- offset from top of optFrame
+
+-- Action buttons row
+reInspectBtn = MakeFlatBtn(optFrame, L.BTN_REINSPECT, nil, 22)
+reInspectBtn:SetPoint("TOPLEFT", optFrame, "TOPLEFT", 8, -(OPT_TOP + 8))
+AutoSizeBtn(reInspectBtn)
+reInspectBtn:SetScript("OnClick", function()
+    wipe(specCache)
+    wipe(ilvlCache)
+    CachePlayerSpec()
+    QueueInspects()
+    print("|cff00ff96PIority:|r " .. L.MSG_REINSPECTING)
+end)
+
+notifToggleBtn = MakeFlatBtn(optFrame, L.BTN_ALERT_POS, nil, 22)
+notifToggleBtn:SetPoint("LEFT", reInspectBtn, "RIGHT", 4, 0)
+AutoSizeBtn(notifToggleBtn)
+notifToggleBtn:SetScript("OnClick", function()
+    if notifFrame:IsShown() and notifFrame.isPreview then
+        notifFrame.isPreview = false
+        notifFrame:Hide()
+    else
+        ShowNotifPreview()
+    end
+end)
+
+resetBtn = MakeFlatBtn(optFrame, L.BTN_RESET, nil, 22)
+resetBtn:SetPoint("LEFT", notifToggleBtn, "RIGHT", 4, 0)
+AutoSizeBtn(resetBtn)
+resetBtn:SetScript("OnClick", function() ResetPITarget() end)
+
+-- Separator between buttons and sound section
+local optSep = optFrame:CreateTexture(nil, "ARTWORK")
+optSep:SetHeight(1)
+optSep:SetColorTexture(P.sep[1], P.sep[2], P.sep[3], P.sep[4])
+optSep:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  1, -(OPT_TOP + 42))
+optSep:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -1, -(OPT_TOP + 42))
+
+-- Sound section label
+local soundLabel = optFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+soundLabel:SetPoint("TOPLEFT", optFrame, "TOPLEFT", 10, -(OPT_TOP + 52))
+soundLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
+soundLabel:SetText(L.OPT_SOUND_LABEL)
+
+-- Custom sound dropdown (stretches to fill, leaving room for the preview button on the right)
+local soundDropBtn = CreateFrame("Button", nil, optFrame, "BackdropTemplate")
+soundDropBtn:SetHeight(24)
+soundDropBtn:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  10,  -(OPT_TOP + 68))
+soundDropBtn:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -38, -(OPT_TOP + 68))
+ApplyFlatBg(soundDropBtn, P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4],
+                           P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+
+local soundDropLabel = soundDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+soundDropLabel:SetPoint("LEFT",  soundDropBtn, "LEFT",  8, 0)
+soundDropLabel:SetPoint("RIGHT", soundDropBtn, "RIGHT", -24, 0)
+soundDropLabel:SetJustifyH("LEFT")
+soundDropLabel:SetTextColor(P.text[1], P.text[2], P.text[3])
+soundDropLabel:SetText(L.SOUND_RAID_WARNING)
+
+local soundArrow = soundDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+soundArrow:SetPoint("RIGHT", soundDropBtn, "RIGHT", -6, 0)
+soundArrow:SetTextColor(P.accent[1], P.accent[2], P.accent[3])
+soundArrow:SetText("v")
+
+soundDropBtn:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], P.btnHov[4])
+    self:SetBackdropBorderColor(P.btnHBd[1], P.btnHBd[2], P.btnHBd[3], P.btnHBd[4])
+    soundDropLabel:SetTextColor(1, 1, 1)
+end)
+soundDropBtn:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4])
+    self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+    soundDropLabel:SetTextColor(P.text[1], P.text[2], P.text[3])
+end)
+
+-- Dropdown popup list (parented to UIParent so it can extend outside the settings window)
+local soundPopup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+soundPopup:SetFrameStrata("TOOLTIP")
+ApplyFlatBg(soundPopup, P.bg[1], P.bg[2], P.bg[3], P.bg[4],
+                         P.accent[1], P.accent[2], P.accent[3], 0.8)
+soundPopup:Hide()
+
+local POPUP_ROW_H = 22
+soundPopup:SetHeight(#SOUND_OPTIONS * POPUP_ROW_H + 2)
+
+local function UpdateSoundDropLabel()
+    local key = (PIorityDB and PIorityDB.soundKey) or "RAID_WARNING"
+    soundDropLabel:SetText(GetSoundLabel(key))
+end
+
+for i, opt in ipairs(SOUND_OPTIONS) do
+    local row = CreateFrame("Button", nil, soundPopup, "BackdropTemplate")
+    row:SetHeight(POPUP_ROW_H)
+    row:SetPoint("TOPLEFT",  soundPopup, "TOPLEFT",  1, -1 - (i - 1) * POPUP_ROW_H)
+    row:SetPoint("TOPRIGHT", soundPopup, "TOPRIGHT", -1, -1 - (i - 1) * POPUP_ROW_H)
+    ApplyFlatBg(row, P.bg[1], P.bg[2], P.bg[3], 0, P.bg[1], P.bg[2], P.bg[3], 0)
+
+    local rowLbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rowLbl:SetPoint("LEFT", row, "LEFT", 10, 0)
+    rowLbl:SetTextColor(P.text[1], P.text[2], P.text[3])
+    rowLbl:SetText(L[opt.labelKey])
+
+    row:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], 0.9)
+        rowLbl:SetTextColor(1, 1, 1)
+    end)
+    row:SetScript("OnLeave", function(self)
+        -- Highlight active selection
+        local cur = (PIorityDB and PIorityDB.soundKey) or "RAID_WARNING"
+        if cur == opt.key then
+            self:SetBackdropColor(P.accent[1] * 0.25, P.accent[2] * 0.25, P.accent[3] * 0.25, 0.6)
+            rowLbl:SetTextColor(P.accent[1], P.accent[2], P.accent[3])
+        else
+            self:SetBackdropColor(P.bg[1], P.bg[2], P.bg[3], 0)
+            rowLbl:SetTextColor(P.text[1], P.text[2], P.text[3])
+        end
+    end)
+    row:SetScript("OnClick", function()
+        if PIorityDB then PIorityDB.soundKey = opt.key end
+        UpdateSoundDropLabel()
+        soundPopup:Hide()
+        if opt.kit then PlaySound(opt.kit) end
+    end)
+end
+
+soundDropBtn:SetScript("OnClick", function()
+    if soundPopup:IsShown() then
+        soundPopup:Hide()
+    else
+        soundPopup:SetWidth(soundDropBtn:GetWidth())
+        soundPopup:ClearAllPoints()
+        soundPopup:SetPoint("TOPLEFT", soundDropBtn, "BOTTOMLEFT", 0, -2)
+        soundPopup:Show()
+        -- Refresh row highlight for current selection
+        local cur = (PIorityDB and PIorityDB.soundKey) or "RAID_WARNING"
+        for i, opt in ipairs(SOUND_OPTIONS) do
+            local row = select(i, soundPopup:GetChildren())
+            if row then
+                if cur == opt.key then
+                    row:SetBackdropColor(P.accent[1] * 0.25, P.accent[2] * 0.25, P.accent[3] * 0.25, 0.6)
+                else
+                    row:SetBackdropColor(P.bg[1], P.bg[2], P.bg[3], 0)
+                end
+            end
+        end
+    end
+end)
+
+-- Close popup when clicking elsewhere
+optFrame:SetScript("OnHide", function() soundPopup:Hide() end)
+
+-- Preview sound button anchored to the right edge of the settings window
+local soundPreviewBtn = MakeFlatBtn(optFrame, ">", 24, 24)
+soundPreviewBtn:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -10, -(OPT_TOP + 68))
+soundPreviewBtn:SetScript("OnClick", function()
+    PlayPISound()
+end)
+soundPreviewBtn:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], P.btnHov[4])
+    self:SetBackdropBorderColor(P.btnHBd[1], P.btnHBd[2], P.btnHBd[3], P.btnHBd[4])
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Preview sound", 1, 1, 1)
+    GameTooltip:Show()
+end)
+soundPreviewBtn:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4])
+    self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+    GameTooltip:Hide()
+end)
+
+-- Preview button: shows the PI request notification with the player's name + plays the sound
+local previewBtn = MakeFlatBtn(optFrame, L.BTN_PREVIEW, nil, 22)
+previewBtn:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  10, -(OPT_TOP + 100))
+previewBtn:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -10, -(OPT_TOP + 100))
+AutoSizeBtn(previewBtn, 80, 24)
+previewBtn:SetScript("OnClick", function() ShowPreviewWithSound() end)
 
 -------------------------------------------------------------------------------
 -- Roster rows
@@ -1031,6 +1298,21 @@ notifIcon:SetSize(90, 90)
 notifIcon:SetPoint("TOP", notifFrame, "TOP", 0, -10)
 notifIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 
+-- Invisible frame over the icon used as the target for ActionButton proc glow.
+local glowFrame = CreateFrame("Frame", nil, notifFrame)
+glowFrame:SetSize(90, 90)
+glowFrame:SetPoint("CENTER", notifIcon, "CENTER")
+
+ns.glow.apply = function()
+    if ActionButton_ShowOverlayGlow then ActionButton_ShowOverlayGlow(glowFrame) end
+end
+
+ns.glow.remove = function()
+    if ActionButton_HideOverlayGlow then ActionButton_HideOverlayGlow(glowFrame) end
+end
+
+notifFrame:HookScript("OnHide", function() ns.glow.remove() end)
+
 local iconShimmer = notifFrame:CreateTexture(nil, "OVERLAY")
 iconShimmer:SetSize(90, 90)
 iconShimmer:SetPoint("CENTER", notifIcon, "CENTER")
@@ -1075,6 +1357,7 @@ local function ShowPIRequest(senderName)
     notifFrame.requester = senderName
     notifFrame.isPreview = false
     notifFrame:Show()
+    ns.glow.apply()
 
     if notifFrame.dismissTimer then notifFrame.dismissTimer:Cancel() end
     notifFrame.dismissTimer = C_Timer.NewTimer(8, function()
@@ -1083,7 +1366,7 @@ local function ShowPIRequest(senderName)
         notifFrame:Hide()
     end)
 
-    PlaySound(SOUNDKIT.RAID_WARNING)
+    PlayPISound()
 end
 
 ShowNotifPreview = function()
@@ -1098,7 +1381,47 @@ ShowNotifPreview = function()
     notifFrame:Show()
 end
 
+ShowPreviewWithSound = function()
+    if notifFrame:IsShown() and notifFrame.isPreview then
+        if notifFrame.dismissTimer then notifFrame.dismissTimer:Cancel() end
+        notifFrame.dismissTimer = nil
+        notifFrame.isPreview    = false
+        notifFrame:Hide()
+        return
+    end
+
+    local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
+                     or GetSpellTexture(PI_SPELL_ID)
+    if iconPath then notifIcon:SetTexture(iconPath) end
+    notifSub:SetText(L.NOTIF_REQUESTS:format(GetPISpellName() or "Power Infusion"))
+
+    local playerName = UnitName("player")
+    local _, classFile = UnitClass("player")
+    local cc = classFile and RAID_CLASS_COLORS[classFile]
+    if cc then
+        notifName:SetTextColor(cc.r, cc.g, cc.b)
+    else
+        notifName:SetTextColor(1, 1, 1)
+    end
+    notifName:SetText(playerName)
+
+    notifFrame.requester = nil
+    notifFrame.isPreview = true
+    notifFrame:Show()
+    ns.glow.apply()
+
+    if notifFrame.dismissTimer then notifFrame.dismissTimer:Cancel() end
+    notifFrame.dismissTimer = C_Timer.NewTimer(8, function()
+        notifFrame.dismissTimer = nil
+        notifFrame.isPreview    = false
+        notifFrame:Hide()
+    end)
+
+    PlayPISound()
+end
+
 frame:HookScript("OnHide", function()
+    optFrame:Hide()
     if notifFrame.isPreview then
         notifFrame.isPreview = false
         notifFrame:Hide()
@@ -1117,6 +1440,104 @@ local function SendPIRequest()
     if not channel then return end
     C_ChatInfo.SendAddonMessage(MSG_PREFIX, MSG_REQUEST, channel)
 end
+
+-------------------------------------------------------------------------------
+-- Minimap button
+-------------------------------------------------------------------------------
+
+local minimapBtn = (function()
+    local RADIUS = 80  -- distance from minimap centre
+
+    local btn = CreateFrame("Button", "PIorityMinimapBtn", Minimap)
+    btn:SetSize(32, 32)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetFrameLevel(8)
+
+    -- Circular mask
+    local mask = btn:CreateMaskTexture()
+    mask:SetAllPoints()
+    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
+                    "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+
+    local icon = btn:CreateTexture(nil, "BACKGROUND")
+    icon:SetAllPoints()
+    icon:AddMaskTexture(mask)
+    btn.icon = icon
+
+    -- Highlight ring
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+    -- Border ring
+    local border = btn:CreateTexture(nil, "OVERLAY")
+    border:SetSize(54, 54)
+    border:SetPoint("CENTER")
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+
+    local function UpdatePosition(angle)
+        local rad = math.rad(angle)
+        btn:SetPoint("CENTER", Minimap, "CENTER",
+            RADIUS * math.cos(rad),
+            RADIUS * math.sin(rad))
+    end
+
+    -- Drag to reposition
+    btn:RegisterForDrag("LeftButton")
+    btn:SetScript("OnDragStart", function(self)
+        self:SetScript("OnUpdate", function()
+            local cx, cy = Minimap:GetCenter()
+            local mx, my = GetCursorPosition()
+            local scale  = Minimap:GetEffectiveScale()
+            local angle  = math.deg(math.atan2((my / scale - cy), (mx / scale - cx)))
+            if PIorityDB then PIorityDB.minimapAngle = angle end
+            UpdatePosition(angle)
+        end)
+    end)
+    btn:SetScript("OnDragStop", function(self)
+        self:SetScript("OnUpdate", nil)
+    end)
+
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:SetScript("OnClick", function(self, button)
+        if button == "LeftButton" then
+            if frame:IsShown() then
+                frame:Hide()
+            else
+                CachePlayerSpec()
+                frame.Refresh()
+                frame:Show()
+            end
+        elseif button == "RightButton" then
+            if optFrame:IsShown() then
+                optFrame:Hide()
+            else
+                optFrame:Show()
+            end
+        end
+    end)
+
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine("|cff8552ebPI|r|cffFFDC6Bority|r")
+        GameTooltip:AddLine("|cffAAAAAALeft-click|r to toggle roster", 1, 1, 1)
+        GameTooltip:AddLine("|cffAAAAAARight-click|r to toggle settings", 1, 1, 1)
+        GameTooltip:AddLine("|cffAAAAAADrag|r to reposition", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    function btn.Init()
+        local angle = (PIorityDB and PIorityDB.minimapAngle) or 225
+        UpdatePosition(angle)
+        -- Set PI spell icon (texture available after login)
+        local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
+                         or GetSpellTexture(PI_SPELL_ID)
+        if iconPath then icon:SetTexture(iconPath) end
+    end
+
+    return btn
+end)()
 
 -------------------------------------------------------------------------------
 -- Events
@@ -1161,12 +1582,16 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         specCache = PIorityDB.specCache
         ilvlCache = PIorityDB.ilvlCache
 
+        -- Defaults for new settings
+        if PIorityDB.soundKey == nil then PIorityDB.soundKey = "RAID_WARNING" end
+
         -- Drop entries for players not in the current group (stale data from last session).
         PruneCacheToGroup()
 
         RestoreFrameLayout()
         RestoreNotifLayout()
         autopickCheck:SetChecked(PIorityDB.autopick and true or false)
+        UpdateSoundDropLabel()
         print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED)
 
     elseif event == "PLAYER_LOGIN" then
@@ -1190,6 +1615,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             -- Announce to any existing group members that this addon is loaded.
             ScheduleAnnounce()
         end
+        minimapBtn.Init()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         CachePlayerSpec()
@@ -1311,8 +1737,6 @@ SlashCmdList["PIH"] = function(msg)
         print(L.HELP_TOGGLE)
         print(L.HELP_TARGET)
         print(L.HELP_HELP)
-        print("  /pi screenshot     - enable screenshot mode (reloads UI)")
-        print("  /pi screenshot off - disable screenshot mode (reloads UI)")
     else
         if frame:IsShown() then
             frame:Hide()
