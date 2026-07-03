@@ -7,26 +7,53 @@ local L = ns.L
 local ADDON_NAME    = "PIority"
 local MACRO_NAME    = "PI_H"
 local PI_SPELL_ID   = 10060
+local MD_SPELL_ID   = 34477  -- Misdirection
 local MSG_PREFIX    = "PIority"
 local MSG_REQUEST   = "REQUEST"
 local MSG_ANNOUNCE  = "ANNOUNCE"
 
--- Returns the client-localized name of Power Infusion.
+-- Returns the client-localized name of a spell.
 -- Prefers the newer C_Spell API (11.0+) with a fallback to GetSpellInfo.
-local function GetPISpellName()
+local function GetSpellNameByID(spellID)
     if C_Spell and C_Spell.GetSpellName then
-        return C_Spell.GetSpellName(PI_SPELL_ID)
+        return C_Spell.GetSpellName(spellID)
     end
-    return (GetSpellInfo(PI_SPELL_ID))  -- extra () drops extra return values
+    return (GetSpellInfo(spellID))  -- extra () drops extra return values
 end
 
-local function BuildMacroBody(targetName)
-    local spell = GetPISpellName() or "Power Infusion"
-    return string.format("#showtooltip %s\n/cast [@%s,exists,nodead][@focus][] %s", spell, targetName, spell)
+-- Per-class macro configuration: which macro/spell each supported class manages,
+-- and the default unit the macro returns to on reset / when leaving a group.
+local CLASS_CONFIG = {
+    PRIEST = {
+        macroName   = MACRO_NAME,
+        spellID     = PI_SPELL_ID,
+        defaultName = "Power Infusion",
+        resetTarget = "player",
+        resetLabel  = "@player",
+    },
+    HUNTER = {
+        macroName   = "MD_H",
+        spellID     = MD_SPELL_ID,
+        defaultName = "Misdirection",
+        resetTarget = "pet",
+        resetLabel  = "@pet",
+    },
+}
+
+-- Returns this character's macro profile (nil if PIority doesn't manage a macro for their class).
+local function GetActiveProfile()
+    local _, playerClass = UnitClass("player")
+    return CLASS_CONFIG[playerClass]
 end
 
-local function BuildResetMacroBody()
-    return BuildMacroBody("focus")
+local function BuildMacroBody(profile, targetName)
+    local spell = GetSpellNameByID(profile.spellID) or profile.defaultName
+    return string.format("#showtooltip %s\n/cast [@%s,exists,nodead][] %s",
+        spell, targetName, spell)
+end
+
+local function BuildResetMacroBody(profile)
+    return BuildMacroBody(profile, profile.resetTarget)
 end
 
 -------------------------------------------------------------------------------
@@ -290,46 +317,68 @@ local function ScheduleAnnounce()
 end
 
 -------------------------------------------------------------------------------
+-- Per-character target storage
+-------------------------------------------------------------------------------
+-- PIorityDB is account-wide, so the selected target is keyed by character to
+-- keep a hunter's "pet" from showing up on a priest (and vice versa).
+
+local function CharKey()
+    return UnitName("player") .. "-" .. GetRealmName()
+end
+
+local function GetLastTarget()
+    return PIorityDB and PIorityDB.charTargets and PIorityDB.charTargets[CharKey()]
+end
+
+local function SetLastTarget(name)  -- pass nil to clear
+    if not PIorityDB then return end
+    PIorityDB.charTargets = PIorityDB.charTargets or {}
+    PIorityDB.charTargets[CharKey()] = name
+end
+
+-------------------------------------------------------------------------------
 -- Macro helpers
 -------------------------------------------------------------------------------
 
-local function GetMacroTarget()
-    local body = GetMacroBody(MACRO_NAME)
+local function GetMacroTarget(profile)
+    local body = GetMacroBody(profile.macroName)
     if not body then return nil end
     return body:match("/cast %[@([^,]+),exists,nodead%]")
 end
 
--- Always create in the player (per-character) tab, never global, so each priest
--- can have their own PI target without stomping other characters' macros.
-local function CreatePIMacro(body)
-    return CreateMacro(MACRO_NAME, "INV_Misc_QuestionMark", body, true)
+-- Always create in the player (per-character) tab, never global, so each character
+-- can have their own macro target without stomping other characters' macros.
+local function CreateClassMacro(profile, body)
+    return CreateMacro(profile.macroName, "INV_Misc_QuestionMark", body, true)
 end
 
-local function EnsureMacroExists(targetName)
-    if GetMacroIndexByName(MACRO_NAME) == 0 then
-        CreatePIMacro(BuildMacroBody(targetName))
-        print("|cff00ff96PIority:|r " .. L.MSG_MACRO_TARGETING:format(MACRO_NAME, targetName))
+local function EnsureMacroExists(profile, targetName)
+    if GetMacroIndexByName(profile.macroName) == 0 then
+        CreateClassMacro(profile, BuildMacroBody(profile, targetName))
+        print("|cff00ff96PIority:|r " .. L.MSG_MACRO_TARGETING:format(profile.macroName, targetName))
     end
 end
 
-local function UpdateMacroTarget(targetName)
-    EnsureMacroExists(targetName)
-    local body = GetMacroBody(MACRO_NAME)
+local function UpdateMacroTarget(profile, targetName)
+    EnsureMacroExists(profile, targetName)
+    local body = GetMacroBody(profile.macroName)
     if not body then return end
 
-    -- Pattern matches any spell name after the conditional so it works in all locales.
+    -- Matches any spell name after the conditional so it works in all locales.
+    -- The `.-` swallows the legacy fallback bracket ([@focus] / [@pet,exists])
+    -- from macros created by older versions, migrating them to the new format.
     local newBody, n = body:gsub(
-        "(/cast %[@)([^,]+)(,exists,nodead%]%[@focus%]%[%] [^\n]+)",
-        "%1" .. targetName .. "%3",
+        "/cast %[@[^,]+,exists,nodead%].-%[%] ([^\n]+)",
+        "/cast [@" .. targetName .. ",exists,nodead][] %1",
         1
     )
     if n == 0 then
-        print("|cffff4444PIority:|r " .. L.MSG_MACRO_NOT_FOUND:format(MACRO_NAME))
+        print("|cffff4444PIority:|r " .. L.MSG_MACRO_NOT_FOUND:format(profile.macroName))
         return
     end
 
-    EditMacro(MACRO_NAME, MACRO_NAME, nil, newBody)
-    print("|cff00ff96PIority:|r " .. L.MSG_MACRO_UPDATED:format(MACRO_NAME, targetName))
+    EditMacro(profile.macroName, profile.macroName, nil, newBody)
+    print("|cff00ff96PIority:|r " .. L.MSG_MACRO_UPDATED:format(profile.macroName, targetName))
 end
 
 local ResetPITarget  -- defined after UI elements are in scope
@@ -375,6 +424,23 @@ local function GetSortedRoster()
     end)
 
     return members
+end
+
+-- Returns the name of the first group member with the Tank role assigned,
+-- or nil if no one has a tank role (e.g. roles weren't assigned in a manual group).
+local function FindFirstTank()
+    if GetNumGroupMembers() == 0 then return nil end
+    if UnitGroupRolesAssigned("player") == "TANK" then
+        return UnitName("player")
+    end
+    local prefix = IsInRaid() and "raid" or "party"
+    for i = 1, GetNumGroupMembers() do
+        local unit = prefix .. i
+        if UnitExists(unit) and UnitGroupRolesAssigned(unit) == "TANK" then
+            return UnitName(unit)
+        end
+    end
+    return nil
 end
 
 -------------------------------------------------------------------------------
@@ -592,8 +658,9 @@ headerIcon:SetSize(18, 18)
 headerIcon:SetPoint("LEFT", headerBar, "LEFT", 10, 0)
 headerIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 C_Timer.After(0, function()
-    local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
-                     or GetSpellTexture(PI_SPELL_ID)
+    local spellID = (GetActiveProfile() or CLASS_CONFIG.PRIEST).spellID
+    local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(spellID)
+                     or GetSpellTexture(spellID)
     if iconPath then headerIcon:SetTexture(iconPath) end
 end)
 
@@ -917,6 +984,14 @@ soundLabel:SetPoint("TOPLEFT", optFrame, "TOPLEFT", 10, -(OPT_TOP + 52))
 soundLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
 soundLabel:SetText(L.OPT_SOUND_LABEL)
 
+-- Red "only for priests" hint on the same line, shown for non-priest characters.
+local priestOnlyLabel = optFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+priestOnlyLabel:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -10, -(OPT_TOP + 52))
+priestOnlyLabel:SetJustifyH("RIGHT")
+priestOnlyLabel:SetTextColor(1.0, 0.27, 0.27)
+priestOnlyLabel:SetText(L.OPT_PRIESTS_ONLY)
+priestOnlyLabel:Hide()
+
 -- Custom sound dropdown (stretches to fill, leaving room for the preview button on the right)
 local soundDropBtn = CreateFrame("Button", nil, optFrame, "BackdropTemplate")
 soundDropBtn:SetHeight(24)
@@ -1120,8 +1195,10 @@ local function MakeRow(index)
 
     btn:SetScript("OnClick", function()
         if not btn.memberName then return end
-        UpdateMacroTarget(btn.memberName)
-        PIorityDB.lastTarget = btn.memberName
+        local profile = GetActiveProfile()
+        if not profile then return end
+        UpdateMacroTarget(profile, btn.memberName)
+        SetLastTarget(btn.memberName)
         statusLabel:SetText(L.STATUS_TARGET .. "|cff00ff96" .. btn.memberName .. "|r")
         frame.Refresh()
     end)
@@ -1137,7 +1214,7 @@ end
 function frame.Refresh()
     SyncContentWidth()
     local roster     = GetSortedRoster()
-    local lastTarget = PIorityDB and PIorityDB.lastTarget
+    local lastTarget = GetLastTarget()
 
     -- Name column: 50% of the space not consumed by fixed columns, min 90px.
     -- Fixed left (icon+rank+dot+gaps)=70, fixed right (ilvl+marker+level+gaps)=78, total=148.
@@ -1217,11 +1294,13 @@ function frame.Refresh()
 end
 
 ResetPITarget = function()
-    UpdateMacroTarget("focus")
-    PIorityDB.lastTarget = nil
+    local profile = GetActiveProfile()
+    if not profile then return end
+    UpdateMacroTarget(profile, profile.resetTarget)
+    SetLastTarget(nil)
     statusLabel:SetText(L.STATUS_NONE)
     frame.Refresh()
-    print("|cff00ff96PIority:|r " .. L.MSG_RESET)
+    print("|cff00ff96PIority:|r " .. L.MSG_RESET:format(profile.resetLabel))
 end
 
 TryAutopick = function()
@@ -1233,10 +1312,29 @@ TryAutopick = function()
     local roster = GetSortedRoster()
     if #roster == 0 then return end
     local top = roster[1]
-    if top.specID and SPEC_PRIORITY[top.specID] and PIorityDB.lastTarget ~= top.name then
-        UpdateMacroTarget(top.name)
-        PIorityDB.lastTarget = top.name
+    if top.specID and SPEC_PRIORITY[top.specID] and GetLastTarget() ~= top.name then
+        UpdateMacroTarget(CLASS_CONFIG.PRIEST, top.name)
+        SetLastTarget(top.name)
         statusLabel:SetText(L.STATUS_AUTO .. "|cff00ff96" .. top.name .. "|r")
+        frame.Refresh()
+    end
+end
+
+-- Hunter auto-pick: targets the first tank in the group. The solo case (own pet)
+-- is covered by the leave-group reset, since @pet is the hunter macro's default.
+-- Self-contained (checks the autopick setting and class on its own) so it's safe to call
+-- from any event handler without needing the inspect/spec-cache machinery priests rely on.
+local function TryAutopickHunter()
+    if not PIorityDB or not PIorityDB.autopick then return end
+    local _, playerClass = UnitClass("player")
+    if playerClass ~= "HUNTER" then return end
+    if GetNumGroupMembers() == 0 then return end
+
+    local target = FindFirstTank()
+    if target and GetLastTarget() ~= target then
+        UpdateMacroTarget(CLASS_CONFIG.HUNTER, target)
+        SetLastTarget(target)
+        statusLabel:SetText(L.STATUS_AUTO .. "|cff00ff96" .. target .. "|r")
         frame.Refresh()
     end
 end
@@ -1248,6 +1346,11 @@ end
 local function CanCastPI()
     return IsSpellKnown(PI_SPELL_ID)
 end
+
+-- Ignore repeat requests inside this window so a requester spamming their
+-- macro doesn't retrigger the popup and sound on the priest over and over.
+local REQUEST_THROTTLE = 10  -- seconds; the popup itself lives for 8
+local lastRequestAt = 0
 
 notifFrame = CreateFrame("Frame", "PIorityNotif", UIParent, "BackdropTemplate")
 notifFrame:SetSize(140, 170)
@@ -1313,7 +1416,7 @@ local function ShowPIRequest(senderName)
     local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
                      or GetSpellTexture(PI_SPELL_ID)
     if iconPath then notifIcon:SetTexture(iconPath) end
-    notifSub:SetText(L.NOTIF_REQUESTS:format(GetPISpellName() or "Power Infusion"))
+    notifSub:SetText(L.NOTIF_REQUESTS:format(GetSpellNameByID(PI_SPELL_ID) or "Power Infusion"))
 
     local unit = GetUnitForName(senderName)
     local _, classFile
@@ -1345,7 +1448,7 @@ ShowNotifPreview = function()
     local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
                      or GetSpellTexture(PI_SPELL_ID)
     if iconPath then notifIcon:SetTexture(iconPath) end
-    notifSub:SetText(L.NOTIF_REQUESTS:format(GetPISpellName() or "Power Infusion"))
+    notifSub:SetText(L.NOTIF_REQUESTS:format(GetSpellNameByID(PI_SPELL_ID) or "Power Infusion"))
     notifName:SetTextColor(0.6, 0.6, 0.6)
     notifName:SetText(L.NOTIF_PREVIEW)
     notifFrame.requester = nil
@@ -1365,7 +1468,7 @@ ShowPreviewWithSound = function()
     local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
                      or GetSpellTexture(PI_SPELL_ID)
     if iconPath then notifIcon:SetTexture(iconPath) end
-    notifSub:SetText(L.NOTIF_REQUESTS:format(GetPISpellName() or "Power Infusion"))
+    notifSub:SetText(L.NOTIF_REQUESTS:format(GetSpellNameByID(PI_SPELL_ID) or "Power Infusion"))
 
     local playerName = UnitName("player")
     local _, classFile = UnitClass("player")
@@ -1392,7 +1495,12 @@ ShowPreviewWithSound = function()
     PlayPISound()
 end
 
+frame:HookScript("OnShow", function()
+    if PIorityDB then PIorityDB.windowOpen = true end
+end)
+
 frame:HookScript("OnHide", function()
+    if PIorityDB then PIorityDB.windowOpen = false end
     optFrame:Hide()
     if notifFrame.isPreview then
         notifFrame.isPreview = false
@@ -1502,9 +1610,10 @@ local minimapBtn = (function()
     function btn.Init()
         local angle = (PIorityDB and PIorityDB.minimapAngle) or 225
         UpdatePosition(angle)
-        -- Set PI spell icon (texture available after login)
-        local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PI_SPELL_ID)
-                         or GetSpellTexture(PI_SPELL_ID)
+        -- Set the active class macro's spell icon (texture available after login)
+        local spellID = (GetActiveProfile() or CLASS_CONFIG.PRIEST).spellID
+        local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(spellID)
+                         or GetSpellTexture(spellID)
         if iconPath then icon:SetTexture(iconPath) end
     end
 
@@ -1529,8 +1638,11 @@ eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     local arg1, arg2, arg3, arg4 = ...
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        PIorityDB = PIorityDB or { lastTarget = nil }
+        PIorityDB = PIorityDB or {}
         if PIorityDB.priority then PIorityDB.priority = nil end
+        -- Legacy account-wide target: dropped in favor of per-character charTargets.
+        -- The macro still holds the value, so PLAYER_LOGIN re-seeds it from there.
+        if PIorityDB.lastTarget then PIorityDB.lastTarget = nil end
 
         -- Screenshot mode: force English and re-apply text to widgets already created.
         if PIorityDB.screenshotMode then
@@ -1564,18 +1676,35 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         RestoreNotifLayout()
         autopickCheck:SetChecked(PIorityDB.autopick and true or false)
         UpdateSoundDropLabel()
+
+        -- The alert-position button configures the PI request notification,
+        -- which only priests ever receive — disable it (with the dimmed flat-button
+        -- style) for everyone else. Screenshot mode keeps the full UI enabled.
+        local _, playerClass = UnitClass("player")
+        if playerClass ~= "PRIEST" and not PIorityDB.screenshotMode then
+            notifToggleBtn:SetEnabled(false)
+            priestOnlyLabel:Show()
+        end
         print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED)
 
     elseif event == "PLAYER_LOGIN" then
         C_ChatInfo.RegisterAddonMessagePrefix(MSG_PREFIX)
         -- Macro list is ready at this point, safe to create if missing.
-        local _, playerClass = UnitClass("player")
-        if playerClass == "PRIEST" and GetMacroIndexByName(MACRO_NAME) == 0 then
-            local idx = CreatePIMacro(BuildResetMacroBody())
+        local profile = GetActiveProfile()
+        if profile and GetMacroIndexByName(profile.macroName) == 0 then
+            local idx = CreateClassMacro(profile, BuildResetMacroBody(profile))
             if idx and idx > 0 then
-                print("|cff00ff96PIority:|r " .. L.MSG_MACRO_CREATED:format(MACRO_NAME))
+                print("|cff00ff96PIority:|r " .. L.MSG_MACRO_CREATED:format(profile.macroName))
             else
-                print("|cffff4444PIority:|r " .. L.MSG_MACRO_LIMIT:format(MACRO_NAME))
+                print("|cffff4444PIority:|r " .. L.MSG_MACRO_LIMIT:format(profile.macroName))
+            end
+        end
+        -- No saved target for this character: adopt whatever the macro currently
+        -- targets (covers upgrades from the old account-wide setting and manual edits).
+        if profile and GetLastTarget() == nil then
+            local current = GetMacroTarget(profile)
+            if current and current ~= profile.resetTarget then
+                SetLastTarget(current)
             end
         end
         -- In screenshot mode open the window automatically with fake data.
@@ -1586,25 +1715,37 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         else
             -- Announce to any existing group members that this addon is loaded.
             ScheduleAnnounce()
+            -- Reopen the window if it was open before the last reload/logout.
+            if PIorityDB and PIorityDB.windowOpen then
+                CachePlayerSpec()
+                frame.Refresh()
+                frame:Show()
+            end
         end
         minimapBtn.Init()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         CachePlayerSpec()
         QueueInspects()
+        TryAutopickHunter()
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         PruneCacheToGroup()
         CachePlayerSpec()
         QueueInspects()
         ScheduleAnnounce()
+        -- Left the group: return the macro to its class default (@player / @pet).
+        if GetNumGroupMembers() == 0 and GetLastTarget() then
+            ResetPITarget()
+        end
+        TryAutopickHunter()
         local inGroup = GetNumGroupMembers() > 0
         if frame:IsShown() then
             frame.Refresh()
         elseif inGroup and not frame:IsShown() then
             -- Only auto-open for priests who have no current group target assigned.
             local _, playerClass = UnitClass("player")
-            local lastTarget = PIorityDB and PIorityDB.lastTarget
+            local lastTarget = GetLastTarget()
             local targetStillInGroup = lastTarget and GetUnitForName(lastTarget) ~= nil
             if playerClass == "PRIEST" and not targetStillInGroup then
                 frame.Refresh()
@@ -1647,8 +1788,11 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         local senderName = arg4 and (arg4:match("^([^%-]+)") or arg4)
         if not senderName or senderName == UnitName("player") then return end
 
-        if arg2 == MSG_REQUEST and CanCastPI() and senderName == GetMacroTarget() then
-            ShowPIRequest(senderName)
+        if arg2 == MSG_REQUEST and CanCastPI() and senderName == GetMacroTarget(CLASS_CONFIG.PRIEST) then
+            if GetTime() - lastRequestAt >= REQUEST_THROTTLE then
+                lastRequestAt = GetTime()
+                ShowPIRequest(senderName)
+            end
         elseif arg2 == MSG_ANNOUNCE then
             addonUsers[senderName] = true
             if frame:IsShown() then frame.Refresh() end
@@ -1699,8 +1843,13 @@ SlashCmdList["PIH"] = function(msg)
         end
     elseif cmd == "target" then
         local name = rest:match("%S+")
-        if name then
-            UpdateMacroTarget(name)
+        local profile = GetActiveProfile()
+        if not profile then
+            print("|cffff4444PIority:|r " .. L.MSG_NO_CLASS_MACRO)
+        elseif name then
+            UpdateMacroTarget(profile, name)
+            SetLastTarget(name)
+            frame.Refresh()
         else
             print("|cffff4444PIority:|r " .. L.MSG_USAGE_TARGET)
         end
