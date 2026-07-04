@@ -496,9 +496,20 @@ local optFrame    -- settings window
 -- Forward refs assigned when settings window is created
 local reInspectBtn, notifToggleBtn, resetBtn
 
+-- Main/options window layouts are shared across all characters by default.
+-- When the "shared position" option is off they're stored per character, with
+-- the shared values as fallback so a fresh character starts where the rest are.
+local function GetLayoutStore()
+    if PIorityDB.sharedLayout ~= false then return PIorityDB end
+    PIorityDB.charLayouts = PIorityDB.charLayouts or {}
+    local key = CharKey()
+    PIorityDB.charLayouts[key] = PIorityDB.charLayouts[key] or {}
+    return PIorityDB.charLayouts[key]
+end
+
 local function SaveFrameLayout()
     local point, _, relPoint, x, y = frame:GetPoint()
-    PIorityDB.layout = {
+    GetLayoutStore().layout = {
         point    = point,
         relPoint = relPoint,
         x        = x,
@@ -509,7 +520,8 @@ local function SaveFrameLayout()
 end
 
 local function RestoreFrameLayout()
-    local l = PIorityDB.layout
+    local store = GetLayoutStore()
+    local l = store.layout or PIorityDB.layout
     if l then
         frame:ClearAllPoints()
         frame:SetPoint(l.point, UIParent, l.relPoint, l.x, l.y)
@@ -517,6 +529,24 @@ local function RestoreFrameLayout()
             math.max(200, l.width  or 290),
             math.max(150, l.height or 420)
         )
+    end
+end
+
+-- Screen-absolute coordinates: the options window is anchored to the main
+-- window until first dragged, so GetPoint() offsets wouldn't survive a
+-- re-anchor to UIParent.
+local function SaveOptLayout()
+    local left, top = optFrame:GetLeft(), optFrame:GetTop()
+    if not left or not top then return end
+    GetLayoutStore().optLayout = { x = left, y = top }
+end
+
+local function RestoreOptLayout()
+    local store = GetLayoutStore()
+    local l = store.optLayout or PIorityDB.optLayout
+    if l then
+        optFrame:ClearAllPoints()
+        optFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l.x, l.y)
     end
 end
 
@@ -631,6 +661,9 @@ frame = CreateFrame("Frame", "PIorityFrame", UIParent, "BackdropTemplate")
 frame:SetSize(290, 420)
 frame:SetPoint("CENTER")
 frame:SetMovable(true)
+-- Keep WoW from saving this named movable frame per character in
+-- layout-local.txt; PIorityDB is the single source of truth for positions.
+frame:SetDontSavePosition(true)
 frame:SetResizable(true)
 frame:SetResizeBounds(200, 150)
 frame:SetClampedToScreen(true)
@@ -881,14 +914,18 @@ end)
 -------------------------------------------------------------------------------
 
 optFrame = CreateFrame("Frame", "PIorityOptionsFrame", UIParent, "BackdropTemplate")
-optFrame:SetSize(310, 168)
+optFrame:SetSize(310, 192)
 optFrame:SetPoint("TOPLEFT", frame, "TOPRIGHT", 6, 0)
 optFrame:SetMovable(true)
+optFrame:SetDontSavePosition(true)
 optFrame:SetClampedToScreen(true)
 optFrame:EnableMouse(true)
 optFrame:RegisterForDrag("LeftButton")
 optFrame:SetScript("OnDragStart", function(self) self:StartMoving() end)
-optFrame:SetScript("OnDragStop",  function(self) self:StopMovingOrSizing() end)
+optFrame:SetScript("OnDragStop",  function(self)
+    self:StopMovingOrSizing()
+    SaveOptLayout()
+end)
 optFrame:SetFrameStrata("HIGH")
 ApplyFlatBg(optFrame, P.bg[1], P.bg[2], P.bg[3], P.bg[4])
 optFrame:Hide()
@@ -935,7 +972,10 @@ optCloseBtn:SetScript("OnClick", function() optFrame:Hide() end)
 optHeader:EnableMouse(true)
 optHeader:RegisterForDrag("LeftButton")
 optHeader:SetScript("OnDragStart", function() optFrame:StartMoving() end)
-optHeader:SetScript("OnDragStop",  function() optFrame:StopMovingOrSizing() end)
+optHeader:SetScript("OnDragStop",  function()
+    optFrame:StopMovingOrSizing()
+    SaveOptLayout()
+end)
 optHeader:SetScript("OnMouseUp",   function() optFrame:StopMovingOrSizing() end)
 optFrame:SetScript("OnMouseUp",    function() optFrame:StopMovingOrSizing() end)
 
@@ -1124,6 +1164,67 @@ previewBtn:SetPoint("TOPLEFT",  optFrame, "TOPLEFT",  10, -(OPT_TOP + 100))
 previewBtn:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -10, -(OPT_TOP + 100))
 AutoSizeBtn(previewBtn, 80, 24)
 previewBtn:SetScript("OnClick", function() ShowPreviewWithSound() end)
+
+-- Shared window position toggle (checked = one position for all characters)
+local sharedPosCheck = CreateFrame("Button", nil, optFrame, "BackdropTemplate")
+sharedPosCheck:SetSize(CHK, CHK)
+sharedPosCheck:SetPoint("TOPLEFT", optFrame, "TOPLEFT", 10, -(OPT_TOP + 132))
+ApplyFlatBg(sharedPosCheck, P.chkBg[1], P.chkBg[2], P.chkBg[3], P.chkBg[4],
+                             P.chkBd[1], P.chkBd[2], P.chkBd[3], P.chkBd[4])
+
+local sharedChkMark = sharedPosCheck:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+sharedChkMark:SetAllPoints()
+sharedChkMark:SetJustifyH("CENTER")
+sharedChkMark:SetJustifyV("MIDDLE")
+
+local sharedChecked = true
+function sharedPosCheck:SetChecked(v)
+    sharedChecked = v
+    if v then
+        sharedChkMark:SetText("|cff33FF66v|r")
+        sharedPosCheck:SetBackdropBorderColor(P.chkOn[1], P.chkOn[2], P.chkOn[3], P.chkOn[4])
+    else
+        sharedChkMark:SetText("")
+        sharedPosCheck:SetBackdropBorderColor(P.chkBd[1], P.chkBd[2], P.chkBd[3], P.chkBd[4])
+    end
+end
+
+local function OnSharedToggle()
+    local v = not sharedChecked
+    sharedPosCheck:SetChecked(v)
+    PIorityDB.sharedLayout = v
+    if v then
+        -- Back to shared: snap both windows to the account-wide position.
+        RestoreFrameLayout()
+        RestoreOptLayout()
+    else
+        -- Per character from now on: seed this character's slots with the
+        -- current on-screen positions so nothing jumps.
+        SaveFrameLayout()
+        SaveOptLayout()
+    end
+end
+sharedPosCheck:SetScript("OnClick", OnSharedToggle)
+sharedPosCheck:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(0.14, 0.14, 0.22, 0.95)
+end)
+sharedPosCheck:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(P.chkBg[1], P.chkBg[2], P.chkBg[3], P.chkBg[4])
+end)
+
+local sharedChkLabelBtn = CreateFrame("Button", nil, optFrame)
+sharedChkLabelBtn:SetPoint("LEFT", sharedPosCheck, "RIGHT", 5, 0)
+local sharedChkLabel = sharedChkLabelBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+sharedChkLabel:SetAllPoints()
+sharedChkLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
+sharedChkLabel:SetText(L.CHK_SHARED_POS)
+sharedChkLabelBtn:SetSize(sharedChkLabel:GetStringWidth() + 2, CHK)
+sharedChkLabelBtn:SetScript("OnClick", OnSharedToggle)
+sharedChkLabelBtn:SetScript("OnEnter", function() sharedChkLabel:SetTextColor(1, 0.95, 1) end)
+sharedChkLabelBtn:SetScript("OnLeave", function() sharedChkLabel:SetTextColor(P.dim[1], P.dim[2], P.dim[3]) end)
+C_Timer.After(0, function()
+    sharedChkLabelBtn:SetWidth(math.max(10, sharedChkLabel:GetStringWidth() + 2))
+end)
 
 -------------------------------------------------------------------------------
 -- Roster rows
@@ -1357,6 +1458,7 @@ notifFrame:SetSize(140, 170)
 notifFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
 notifFrame:SetFrameStrata("HIGH")
 notifFrame:SetMovable(true)
+notifFrame:SetDontSavePosition(true)
 notifFrame:EnableMouse(true)
 notifFrame:RegisterForDrag("LeftButton")
 notifFrame:SetScript("OnDragStart", notifFrame.StartMoving)
@@ -1522,6 +1624,219 @@ local function SendPIRequest()
 end
 
 -------------------------------------------------------------------------------
+-- Bloodlust watch (hunter side)
+-------------------------------------------------------------------------------
+-- In a 5-man group with no Shaman/Mage/Evoker, lust duty falls to the hunter's
+-- pet. Warn when the summoned pet isn't Ferocity and offer a secure button
+-- that dismisses the current pet and then calls a Ferocity one from the call
+-- slots ([nopet] conditional: first click dismisses, second click calls).
+
+local LUST_CLASSES     = { SHAMAN = true, MAGE = true, EVOKER = true }
+local FEROCITY_SPEC_ID = 74                   -- pet specs: 74 Ferocity, 79 Cunning, 81 Tenacity
+local PRIMAL_RAGE_IDS  = { 272678, 264667 }   -- pet lust; fallback when spec info isn't ready
+local DISMISS_PET_ID   = 2641
+local CALL_PET_IDS     = { 883, 83242, 83243, 83244, 83245 }  -- Call Pet 1-5
+
+local blTimer, blDismissed, blPendingRefresh
+local blRetries  = 0
+local blFeroSlot, blFeroName
+
+local function HunterHasLustDuty()
+    local _, playerClass = UnitClass("player")
+    if playerClass ~= "HUNTER" then return false end
+    if not IsInGroup() or IsInRaid() then return false end
+    for i = 1, GetNumGroupMembers() - 1 do
+        local _, classFile = UnitClass("party" .. i)
+        if classFile and LUST_CLASSES[classFile] then return false end
+    end
+    return true
+end
+
+-- Returns true/false, or nil while the pet's spec info isn't available yet
+-- (e.g. right after a loading screen).
+local function PetCanLust()
+    if not UnitExists("pet") then return false end
+    local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+    local getInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+    local specIndex = getSpec and getSpec(false, true)     -- isInspect=false, isPet=true
+    local specID = specIndex and getInfo and getInfo(specIndex, false, true)
+    if specID then return specID == FEROCITY_SPEC_ID end
+    for _, id in ipairs(PRIMAL_RAGE_IDS) do
+        if IsSpellKnown(id, true) then return true end
+    end
+    return nil
+end
+
+-- First call slot (1-5) holding a Ferocity pet, plus that pet's name.
+local function FindFerocitySlot()
+    if not (C_StableInfo and C_StableInfo.GetStablePetInfo) then return nil end
+    for slot = 1, #CALL_PET_IDS do
+        local info = C_StableInfo.GetStablePetInfo(slot)
+        if info and info.specID == FEROCITY_SPEC_ID then
+            return slot, info.name
+        end
+    end
+end
+
+local blFrame = CreateFrame("Frame", "PIorityBLWarn", UIParent, "BackdropTemplate")
+blFrame:SetSize(270, 80)
+blFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 220)
+blFrame:SetFrameStrata("HIGH")
+blFrame:SetMovable(true)
+blFrame:SetDontSavePosition(true)
+blFrame:SetClampedToScreen(true)
+blFrame:EnableMouse(true)
+blFrame:RegisterForDrag("LeftButton")
+blFrame:SetScript("OnDragStart", blFrame.StartMoving)
+blFrame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    if not PIorityDB then return end
+    local point, _, relPoint, x, y = self:GetPoint()
+    PIorityDB.blLayout = { point = point, relPoint = relPoint, x = x, y = y }
+end)
+ApplyFlatBg(blFrame, P.bg[1], P.bg[2], P.bg[3], P.bg[4], 0.75, 0.25, 0.25, 1)
+blFrame:Hide()
+
+local function RestoreBLLayout()
+    local l = PIorityDB and PIorityDB.blLayout
+    if l then
+        blFrame:ClearAllPoints()
+        blFrame:SetPoint(l.point, UIParent, l.relPoint, l.x, l.y)
+    end
+end
+
+local blIcon = blFrame:CreateTexture(nil, "ARTWORK")
+blIcon:SetSize(30, 30)
+blIcon:SetPoint("TOPLEFT", blFrame, "TOPLEFT", 10, -10)
+blIcon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+C_Timer.After(0, function()
+    local iconPath = (C_Spell and C_Spell.GetSpellTexture) and C_Spell.GetSpellTexture(PRIMAL_RAGE_IDS[1])
+                     or GetSpellTexture(PRIMAL_RAGE_IDS[1])
+    if iconPath then blIcon:SetTexture(iconPath) end
+end)
+
+local blTitle = blFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+blTitle:SetPoint("TOPLEFT", blIcon, "TOPRIGHT", 8, -1)
+blTitle:SetPoint("RIGHT", blFrame, "RIGHT", -26, 0)
+blTitle:SetJustifyH("LEFT")
+blTitle:SetTextColor(1.0, 0.35, 0.30)
+blTitle:SetText(L.BL_WARN_TITLE)
+
+local blSub = blFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+blSub:SetPoint("TOPLEFT", blTitle, "BOTTOMLEFT", 0, -3)
+blSub:SetPoint("RIGHT", blFrame, "RIGHT", -10, 0)
+blSub:SetJustifyH("LEFT")
+blSub:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
+
+local blClose = CreateFrame("Button", nil, blFrame)
+blClose:SetSize(18, 18)
+blClose:SetPoint("TOPRIGHT", blFrame, "TOPRIGHT", -4, -4)
+local blCloseLbl = blClose:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+blCloseLbl:SetAllPoints()
+blCloseLbl:SetJustifyH("CENTER")
+blCloseLbl:SetText("x")
+blCloseLbl:SetTextColor(0.55, 0.45, 0.70)
+blClose:SetScript("OnEnter", function() blCloseLbl:SetTextColor(1, 0.35, 0.35) end)
+blClose:SetScript("OnLeave", function() blCloseLbl:SetTextColor(0.55, 0.45, 0.70) end)
+blClose:SetScript("OnClick", function()
+    blDismissed = true
+    blFrame:Hide()
+end)
+
+-- Secure button: needs SecureActionButtonTemplate, so it can't come from
+-- MakeFlatBtn — styled here to match.
+local blSwapBtn = CreateFrame("Button", "PIorityBLSwapBtn", blFrame,
+                              "SecureActionButtonTemplate, BackdropTemplate")
+blSwapBtn:SetSize(140, 22)
+blSwapBtn:SetPoint("BOTTOM", blFrame, "BOTTOM", 0, 8)
+blSwapBtn:RegisterForClicks("AnyDown")
+blSwapBtn:SetAttribute("type", "macro")
+ApplyFlatBg(blSwapBtn, P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4],
+                       P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+local blSwapLbl = blSwapBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+blSwapLbl:SetAllPoints()
+blSwapLbl:SetJustifyH("CENTER")
+blSwapLbl:SetTextColor(P.text[1], P.text[2], P.text[3])
+blSwapBtn:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], P.btnHov[4])
+    self:SetBackdropBorderColor(P.btnHBd[1], P.btnHBd[2], P.btnHBd[3], P.btnHBd[4])
+    blSwapLbl:SetTextColor(1, 1, 1)
+    if self.tipText then
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(self.tipText, 1, 1, 1, true)
+        GameTooltip:Show()
+    end
+end)
+blSwapBtn:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(P.btnBg[1], P.btnBg[2], P.btnBg[3], P.btnBg[4])
+    self:SetBackdropBorderColor(P.btnBd[1], P.btnBd[2], P.btnBd[3], P.btnBd[4])
+    blSwapLbl:SetTextColor(P.text[1], P.text[2], P.text[3])
+    GameTooltip:Hide()
+end)
+
+local ScheduleBLCheck  -- forward-declared for the retry below
+
+local function RefreshBLWarning()
+    -- Secure attributes and protected-button visibility can't change in combat;
+    -- defer the whole refresh to PLAYER_REGEN_ENABLED.
+    if InCombatLockdown() then blPendingRefresh = true; return end
+    blPendingRefresh = false
+
+    local duty = HunterHasLustDuty() and not (PIorityDB and PIorityDB.screenshotMode)
+    local canLust = duty and PetCanLust()
+    if not duty or canLust == true then
+        blDismissed = false
+        blFrame:Hide()
+        return
+    end
+    if canLust == nil then
+        blRetries = blRetries + 1
+        if blRetries <= 5 then ScheduleBLCheck() end
+        return
+    end
+    blRetries = 0
+    if blDismissed then return end
+
+    blFeroSlot, blFeroName = FindFerocitySlot()
+    local hasPet = UnitExists("pet")
+
+    if blFeroSlot then
+        blSub:SetText(hasPet and L.BL_WARN_WRONG_PET or L.BL_WARN_NO_PET)
+        local callName    = GetSpellNameByID(CALL_PET_IDS[blFeroSlot])
+        local dismissName = GetSpellNameByID(DISMISS_PET_ID)
+        if callName and dismissName then
+            blSwapBtn:SetAttribute("macrotext",
+                ("/cast [nopet] %s; %s"):format(callName, dismissName))
+            blSwapLbl:SetText(hasPet and L.BL_BTN_DISMISS
+                              or L.BL_BTN_CALL:format(blFeroName or callName))
+            blSwapBtn:SetWidth(math.max(90, blSwapLbl:GetStringWidth() + 22))
+            blSwapBtn.tipText = hasPet and L.BL_TIP:format(blFeroName or callName) or nil
+            blSwapBtn:Show()
+        else
+            blSwapBtn:Hide()
+        end
+    else
+        blSub:SetText(L.BL_WARN_NO_FERO)
+        blSwapBtn:Hide()
+    end
+
+    if not blFrame:IsShown() then
+        blFrame:Show()
+        PlayPISound()
+    end
+end
+
+ScheduleBLCheck = function()
+    local _, playerClass = UnitClass("player")
+    if playerClass ~= "HUNTER" then return end
+    if blTimer then blTimer:Cancel() end
+    blTimer = C_Timer.NewTimer(1, function()
+        blTimer = nil
+        RefreshBLWarning()
+    end)
+end
+
+-------------------------------------------------------------------------------
 -- Minimap button
 -------------------------------------------------------------------------------
 
@@ -1657,6 +1972,10 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             C_Timer.After(0, function()
                 chkLabelBtn:SetWidth(math.max(10, chkLabel:GetStringWidth() + 2))
             end)
+            sharedChkLabel:SetText(L.CHK_SHARED_POS)
+            C_Timer.After(0, function()
+                sharedChkLabelBtn:SetWidth(math.max(10, sharedChkLabel:GetStringWidth() + 2))
+            end)
             statusLabel:SetText(L.STATUS_NONE)
         end
 
@@ -1672,9 +1991,25 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         -- Drop entries for players not in the current group (stale data from last session).
         PruneCacheToGroup()
 
+        -- One-time seeding (backwards compatibility): the first character that
+        -- logs in with shared positions enabled defines the account-wide
+        -- position for all others. Its own layout wins — promote any
+        -- per-character layout this character may have over the shared slots.
+        if not PIorityDB.sharedLayoutSeeded and PIorityDB.sharedLayout ~= false then
+            local mine = PIorityDB.charLayouts and PIorityDB.charLayouts[CharKey()]
+            if mine then
+                if mine.layout    then PIorityDB.layout    = mine.layout end
+                if mine.optLayout then PIorityDB.optLayout = mine.optLayout end
+            end
+            PIorityDB.sharedLayoutSeeded = true
+        end
+
         RestoreFrameLayout()
+        RestoreOptLayout()
         RestoreNotifLayout()
+        RestoreBLLayout()
         autopickCheck:SetChecked(PIorityDB.autopick and true or false)
+        sharedPosCheck:SetChecked(PIorityDB.sharedLayout ~= false)
         UpdateSoundDropLabel()
 
         -- The alert-position button configures the PI request notification,
@@ -1685,9 +2020,26 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             notifToggleBtn:SetEnabled(false)
             priestOnlyLabel:Show()
         end
+
+        -- Bloodlust watch only matters for hunters; skip the event traffic otherwise.
+        if playerClass == "HUNTER" then
+            eventFrame:RegisterUnitEvent("UNIT_PET", "player")
+            eventFrame:RegisterEvent("PET_STABLE_UPDATE")
+            eventFrame:RegisterEvent("SPELLS_CHANGED")
+            eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        end
         print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED)
 
     elseif event == "PLAYER_LOGIN" then
+        -- WoW's per-character layout cache (layout-local.txt) restores named
+        -- user-placed frames after ADDON_LOADED, stomping the positions applied
+        -- there. Re-apply ours on top so PIorityDB always wins; together with
+        -- SetDontSavePosition this also neutralizes stale cache entries left
+        -- behind by older versions.
+        RestoreFrameLayout()
+        RestoreOptLayout()
+        RestoreNotifLayout()
+        RestoreBLLayout()
         C_ChatInfo.RegisterAddonMessagePrefix(MSG_PREFIX)
         -- Macro list is ready at this point, safe to create if missing.
         local profile = GetActiveProfile()
@@ -1728,6 +2080,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         CachePlayerSpec()
         QueueInspects()
         TryAutopickHunter()
+        ScheduleBLCheck()
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         PruneCacheToGroup()
@@ -1739,6 +2092,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             ResetPITarget()
         end
         TryAutopickHunter()
+        -- Group composition changed: a previously dismissed BL warning may apply again.
+        blDismissed = false
+        ScheduleBLCheck()
         local inGroup = GetNumGroupMembers() > 0
         if frame:IsShown() then
             frame.Refresh()
@@ -1809,6 +2165,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
                 notifFrame:Hide()
             end
         end
+
+    elseif event == "UNIT_PET" or event == "PET_STABLE_UPDATE" or event == "SPELLS_CHANGED" then
+        ScheduleBLCheck()
+
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        if blPendingRefresh then RefreshBLWarning() end
     end
 end)
 

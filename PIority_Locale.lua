@@ -14,6 +14,7 @@ L.BTN_ALERT_POS         = "Alert pos"
 L.BTN_RESET             = "Reset"
 L.BTN_PREVIEW           = "Preview notification"
 L.CHK_AUTOPICK          = "Auto-pick"
+L.CHK_SHARED_POS        = "Same window position for all characters"
 L.STATUS_NONE           = "No target selected"
 L.STATUS_TARGET         = "Target: "
 L.STATUS_AUTO           = "Auto: "
@@ -39,6 +40,15 @@ L.MSG_NOT_IN_GROUP      = "You must be in a group to request PI."
 L.MSG_USAGE_TARGET      = "Usage: /pi target <name>"
 L.MSG_NO_CLASS_MACRO    = "PIority doesn't manage a macro for your class yet."
 
+-- Bloodlust watch (hunter)
+L.BL_WARN_TITLE         = "No Bloodlust in group!"
+L.BL_WARN_WRONG_PET     = "Your pet is not Ferocity."
+L.BL_WARN_NO_PET        = "You have no pet summoned."
+L.BL_WARN_NO_FERO       = "No Ferocity pet in your call slots."
+L.BL_BTN_DISMISS        = "Dismiss pet"
+L.BL_BTN_CALL           = "Call %s"
+L.BL_TIP                = "Dismisses your current pet; a second click calls %s."
+
 -- Sound option labels
 L.SOUND_RAID_WARNING    = "Raid Warning"
 L.SOUND_PVP_QUEUE       = "PvP Queue Pop"
@@ -58,7 +68,7 @@ for k, v in pairs(L) do ns.englishLocale[k] = v end
 -- ============================================================
 -- German
 -- ============================================================
-if GetLocale() == "deDE" then
+if GetLocale() == "deDEE" then
     -- L.TITLE is deliberately omitted here; see the note above.
     L.BTN_OPTIONS           = "Optionen"
     L.BTN_REINSPECT         = "Neu prüfen"
@@ -66,6 +76,7 @@ if GetLocale() == "deDE" then
     L.BTN_RESET             = "Zurücksetzen"
     L.BTN_PREVIEW           = "Benachrichtigung testen"
     L.CHK_AUTOPICK          = "Auto-Wahl"
+    L.CHK_SHARED_POS        = "Gleiche Fensterposition für alle Charaktere"
     L.STATUS_NONE           = "Kein Ziel ausgewählt"
     L.STATUS_TARGET         = "Ziel: "
     L.STATUS_AUTO           = "Auto: "
@@ -90,6 +101,15 @@ if GetLocale() == "deDE" then
     L.MSG_NOT_IN_GROUP      = "Du musst in einer Gruppe sein, um PI anzufragen."
     L.MSG_USAGE_TARGET      = "Verwendung: /pi target <Name>"
     L.MSG_NO_CLASS_MACRO    = "PIority verwaltet für deine Klasse noch kein Makro."
+
+    -- Bloodlust watch (hunter)
+    L.BL_WARN_TITLE         = "Kein Kampfrausch in der Gruppe!"
+    L.BL_WARN_WRONG_PET     = "Dein Begleiter ist nicht auf Wildheit."
+    L.BL_WARN_NO_PET        = "Du hast keinen Begleiter gerufen."
+    L.BL_WARN_NO_FERO       = "Kein Wildheit-Begleiter verfügbar."
+    L.BL_BTN_DISMISS        = "Begleiter fortschicken"
+    L.BL_BTN_CALL           = "%s rufen"
+    L.BL_TIP                = "Schickt deinen Begleiter fort; ein zweiter Klick ruft %s."
 
     -- Sound option labels
     L.SOUND_RAID_WARNING    = "Schlachtzugswarnung"
