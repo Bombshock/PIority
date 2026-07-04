@@ -4,9 +4,12 @@
 
 PIority is a World of Warcraft addon for priests and hunters that takes the guesswork out of buff targeting. As a priest, it scans your party or raid, inspects every member's specialization and item level, and presents a ranked list sorted by which specs benefit most from Power Infusion — click any row to instantly update your PI_H macro to that player. As a hunter, it automatically points your MD_H Misdirection macro at the first tank in your group, or at your own pet when solo.
 
+The macro stays **yours**: PIority never rewrites your macro — it only swaps the `@target` inside the one `/cast` line it manages. Add trinkets, announcements, modifiers, or any other lines to PI_H/MD_H and they survive every retarget untouched.
+
 ## Features
 
 - **Priority-sorted roster** — all 32 DPS/tank specs ranked by PI value, with class-colored names and spec labels
+- **Non-destructive macro editing** — only the targeting clause of the managed `/cast` line is ever changed; every other line you add to the macro is preserved exactly as you wrote it (if the line can't be found, PIority warns instead of touching the macro)
 - **Auto-pick mode** — priests automatically target the highest-priority player when everyone's spec is known; hunters automatically target the group's tank
 - **Hunter Misdirection support** — maintains an MD_H macro targeting your tank in groups or your pet when solo
 - **Bloodlust watch** — hunters in a 5-man group with no Shaman/Mage/Evoker get a warning when their summoned pet isn't Ferocity, with a one-button swap that dismisses the current pet and calls a Ferocity pet from their call slots
