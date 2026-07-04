@@ -46,6 +46,13 @@ local function GetActiveProfile()
     return CLASS_CONFIG[playerClass]
 end
 
+-- Class-flavored slash command shown in chat messages (/pi for priests,
+-- /md for hunters). Both commands are registered and work for every class.
+local function PrimarySlash()
+    local _, playerClass = UnitClass("player")
+    return playerClass == "HUNTER" and "/md" or "/pi"
+end
+
 local function BuildMacroBody(profile, targetName)
     local spell = GetSpellNameByID(profile.spellID) or profile.defaultName
     return string.format("#showtooltip %s\n/cast [@%s,exists,nodead][] %s",
@@ -1644,6 +1651,8 @@ local blFeroSlot, blFeroName
 local function HunterHasLustDuty()
     local _, playerClass = UnitClass("player")
     if playerClass ~= "HUNTER" then return false end
+    -- Screenshot mode: pretend we're in a 5-man group with no other lust class.
+    if PIorityDB and PIorityDB.screenshotMode then return true end
     if not IsInGroup() or IsInRaid() then return false end
     for i = 1, GetNumGroupMembers() - 1 do
         local _, classFile = UnitClass("party" .. i)
@@ -1782,7 +1791,7 @@ local function RefreshBLWarning()
     if InCombatLockdown() then blPendingRefresh = true; return end
     blPendingRefresh = false
 
-    local duty = HunterHasLustDuty() and not (PIorityDB and PIorityDB.screenshotMode)
+    local duty = HunterHasLustDuty()
     local canLust = duty and PetCanLust()
     if not duty or canLust == true then
         blDismissed = false
@@ -1976,6 +1985,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             C_Timer.After(0, function()
                 sharedChkLabelBtn:SetWidth(math.max(10, sharedChkLabel:GetStringWidth() + 2))
             end)
+            blTitle:SetText(L.BL_WARN_TITLE)
             statusLabel:SetText(L.STATUS_NONE)
         end
 
@@ -2028,7 +2038,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             eventFrame:RegisterEvent("SPELLS_CHANGED")
             eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         end
-        print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED)
+        print("|cff00ff96" .. L.TITLE .. "|r " .. L.MSG_LOADED:format(PrimarySlash()))
 
     elseif event == "PLAYER_LOGIN" then
         -- WoW's per-character layout cache (layout-local.txt) restores named
@@ -2186,6 +2196,7 @@ SLASH_PIREQUEST1 = "/pirequest"
 SlashCmdList["PIREQUEST"] = function() SendPIRequest() end
 
 SLASH_PIH1 = "/pi"
+SLASH_PIH2 = "/md"
 SlashCmdList["PIH"] = function(msg)
     local cmd, rest = msg:match("^(%S*)%s*(.*)")
     cmd = (cmd or ""):lower()
@@ -2213,13 +2224,14 @@ SlashCmdList["PIH"] = function(msg)
             SetLastTarget(name)
             frame.Refresh()
         else
-            print("|cffff4444PIority:|r " .. L.MSG_USAGE_TARGET)
+            print("|cffff4444PIority:|r " .. L.MSG_USAGE_TARGET:format(PrimarySlash()))
         end
     elseif cmd == "help" then
+        local slash = PrimarySlash()
         print("|cff00ff96" .. L.HELP_HEADER .. "|r")
-        print(L.HELP_TOGGLE)
-        print(L.HELP_TARGET)
-        print(L.HELP_HELP)
+        print(L.HELP_TOGGLE:format(slash))
+        print(L.HELP_TARGET:format(slash))
+        print(L.HELP_HELP:format(slash))
     else
         if frame:IsShown() then
             frame:Hide()

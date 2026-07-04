@@ -16,7 +16,7 @@ PIority is a World of Warcraft addon for priests and hunters that takes the gues
 - **PI request notifications** — if your current PI target sends a /pirequest, a dismissable alert pops up with a pulsing spell icon and a raid warning sound (spam-protected)
 - **Per-character targets** — every character remembers its own macro target between sessions
 - **Persistent layout** — window position, size, open state, and notification frame position are saved between sessions; main and settings windows share one position across all characters by default, with a settings checkbox to switch to per-character positions
-- **Slash commands** — `/pi` to toggle the window, `/pi target <name>` to set directly, `/pirequest` for players to alert their priest
+- **Slash commands** — `/pi` (priests) or `/md` (hunters) to toggle the window — both work for both classes — plus `target <name>` to set directly and `/pirequest` for players to alert their priest
 
 ## Screenshots
 
@@ -28,9 +28,11 @@ PIority is a World of Warcraft addon for priests and hunters that takes the gues
 
 ## Slash commands
 
+`/pi` and `/md` are interchangeable aliases — `/pi` is shown to priests, `/md` to hunters, but both work for every class.
+
 | Command | Effect |
 |---|---|
-| `/pi` | Toggle the roster window |
+| `/pi` or `/md` | Toggle the roster window |
 | `/pi target <name>` | Set the macro target directly |
 | `/pi help` | Print command help |
 | `/pirequest` | Alert your priest that you want Power Infusion (usable by any group member, e.g. from a macro) |

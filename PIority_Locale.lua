@@ -24,10 +24,10 @@ L.OPT_TITLE             = "Settings"
 L.OPT_SOUND_LABEL       = "PI Request Sound"
 L.OPT_PRIESTS_ONLY      = "only for priests"
 L.HELP_HEADER           = "PIority commands:"
-L.HELP_TOGGLE           = "  /pi            - toggle roster window"
-L.HELP_TARGET           = "  /pi target N   - update macro target directly"
-L.HELP_HELP             = "  /pi help       - this message"
-L.MSG_LOADED            = "loaded. Type |cffffff00/pi|r to open."
+L.HELP_TOGGLE           = "  %s            - toggle roster window"
+L.HELP_TARGET           = "  %s target N   - update macro target directly"
+L.HELP_HELP             = "  %s help       - this message"
+L.MSG_LOADED            = "loaded. Type |cffffff00%s|r to open."
 L.MSG_MACRO_CREATED     = "Macro '%s' created."
 L.MSG_MACRO_LIMIT       = "Could not create macro '%s' - you may be at the macro limit."
 L.MSG_MACRO_UPDATED     = "Macro '%s' -> %s"
@@ -37,7 +37,7 @@ L.MSG_RESET             = "Target reset to %s."
 L.MSG_REINSPECTING      = "Re-inspecting all members..."
 L.MSG_PI_REQUESTED      = "PI requested."
 L.MSG_NOT_IN_GROUP      = "You must be in a group to request PI."
-L.MSG_USAGE_TARGET      = "Usage: /pi target <name>"
+L.MSG_USAGE_TARGET      = "Usage: %s target <name>"
 L.MSG_NO_CLASS_MACRO    = "PIority doesn't manage a macro for your class yet."
 
 -- Bloodlust watch (hunter)
@@ -68,7 +68,7 @@ for k, v in pairs(L) do ns.englishLocale[k] = v end
 -- ============================================================
 -- German
 -- ============================================================
-if GetLocale() == "deDEE" then
+if GetLocale() == "deDE" then
     -- L.TITLE is deliberately omitted here; see the note above.
     L.BTN_OPTIONS           = "Optionen"
     L.BTN_REINSPECT         = "Neu prüfen"
@@ -86,10 +86,10 @@ if GetLocale() == "deDEE" then
     L.OPT_SOUND_LABEL       = "PI-Anfrage-Sound"
     L.OPT_PRIESTS_ONLY      = "nur für Priester"
     L.HELP_HEADER           = "PIority Befehle:"
-    L.HELP_TOGGLE           = "  /pi            - Fenster ein-/ausblenden"
-    L.HELP_TARGET           = "  /pi target N   - Makroziel direkt setzen"
-    L.HELP_HELP             = "  /pi help       - diese Nachricht"
-    L.MSG_LOADED            = "geladen. Tippe |cffffff00/pi|r zum Öffnen."
+    L.HELP_TOGGLE           = "  %s            - Fenster ein-/ausblenden"
+    L.HELP_TARGET           = "  %s target N   - Makroziel direkt setzen"
+    L.HELP_HELP             = "  %s help       - diese Nachricht"
+    L.MSG_LOADED            = "geladen. Tippe |cffffff00%s|r zum Öffnen."
     L.MSG_MACRO_CREATED     = "Makro '%s' erstellt."
     L.MSG_MACRO_LIMIT       = "Makro '%s' konnte nicht erstellt werden - Makrolimit erreicht?"
     L.MSG_MACRO_UPDATED     = "Makro '%s' -> %s"
@@ -99,7 +99,7 @@ if GetLocale() == "deDEE" then
     L.MSG_REINSPECTING      = "Alle Mitglieder werden neu geprüft..."
     L.MSG_PI_REQUESTED      = "PI angefragt."
     L.MSG_NOT_IN_GROUP      = "Du musst in einer Gruppe sein, um PI anzufragen."
-    L.MSG_USAGE_TARGET      = "Verwendung: /pi target <Name>"
+    L.MSG_USAGE_TARGET      = "Verwendung: %s target <Name>"
     L.MSG_NO_CLASS_MACRO    = "PIority verwaltet für deine Klasse noch kein Makro."
 
     -- Bloodlust watch (hunter)
