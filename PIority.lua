@@ -347,10 +347,19 @@ end
 -- Macro helpers
 -------------------------------------------------------------------------------
 
+-- Last-known macro target per macro name. GetMacroBody does not return the
+-- macro text during combat lockdown, so we cache the target whenever we can
+-- read it out of combat and fall back to that cache in combat. Without this
+-- the PI request popup never fires mid-fight, because the CHAT_MSG_ADDON gate
+-- compares the sender against GetMacroTarget().
+local macroTargetCache = {}
+
 local function GetMacroTarget(profile)
     local body = GetMacroBody(profile.macroName)
-    if not body then return nil end
-    return body:match("/cast %[@([^,]+),exists,nodead%]")
+    if not body then return macroTargetCache[profile.macroName] end
+    local target = body:match("/cast %[@([^,]+),exists,nodead%]")
+    macroTargetCache[profile.macroName] = target
+    return target
 end
 
 -- Always create in the player (per-character) tab, never global, so each character
@@ -385,6 +394,7 @@ local function UpdateMacroTarget(profile, targetName)
     end
 
     EditMacro(profile.macroName, profile.macroName, nil, newBody)
+    macroTargetCache[profile.macroName] = targetName
     print("|cff00ff96PIority:|r " .. L.MSG_MACRO_UPDATED:format(profile.macroName, targetName))
 end
 
@@ -464,6 +474,8 @@ local SOUND_OPTIONS = {
     { key = "EPIC_LOOT",     labelKey = "SOUND_EPIC_LOOT",     kit = SOUNDKIT.UI_EPICLOOT_TOAST      },
     { key = "QUEST_DONE",    labelKey = "SOUND_QUEST_DONE",    kit = SOUNDKIT.UI_AUTO_QUEST_COMPLETE  },
     { key = "BOSS_WARNING",  labelKey = "SOUND_BOSS_WARNING",  kit = SOUNDKIT.RAID_BOSS_EMOTE_WARNING },
+    { key = "TTS_PI",        labelKey = "SOUND_TTS_PI",        tts = "plain"                         },
+    { key = "TTS_NAME",      labelKey = "SOUND_TTS_NAME",      tts = "name"                          },
     { key = "NONE",          labelKey = "SOUND_NONE",          kit = nil                             },
 }
 
@@ -474,12 +486,39 @@ local function GetSoundLabel(key)
     return L.SOUND_RAID_WARNING
 end
 
-local function PlayPISound()
+local function SpeakTTS(text)
+    if not (C_VoiceChat and C_VoiceChat.SpeakText) then return end
+    local voiceID = 0
+    if C_TTSSettings and C_TTSSettings.GetVoiceOptionID then
+        voiceID = C_TTSSettings.GetVoiceOptionID(0) or 0
+    end
+    local rate = (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
+    local volume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()) or 100
+    C_VoiceChat.SpeakText(voiceID, text,
+        Enum.VoiceTtsDestination and Enum.VoiceTtsDestination.QueuedLocalPlayback or 1,
+        rate, volume)
+end
+
+-- Plays whatever the given option represents; requesterName feeds the TTS
+-- name variant and may be nil (falls back to the plain phrase).
+local function PlaySoundOption(opt, requesterName)
+    if opt.tts then
+        if opt.tts == "name" and requesterName then
+            SpeakTTS(L.TTS_NAME_REQUESTED:format(Ambiguate(requesterName, "short")))
+        else
+            SpeakTTS(L.TTS_PI_REQUESTED)
+        end
+    elseif opt.kit then
+        PlaySound(opt.kit)
+    end
+end
+
+local function PlayPISound(requesterName)
     if not PIorityDB then return end
     local key = PIorityDB.soundKey or "RAID_WARNING"
     for _, opt in ipairs(SOUND_OPTIONS) do
         if opt.key == key then
-            if opt.kit then PlaySound(opt.kit) end
+            PlaySoundOption(opt, requesterName)
             return
         end
     end
@@ -1116,7 +1155,7 @@ for i, opt in ipairs(SOUND_OPTIONS) do
         if PIorityDB then PIorityDB.soundKey = opt.key end
         UpdateSoundDropLabel()
         soundPopup:Hide()
-        if opt.kit then PlaySound(opt.kit) end
+        PlaySoundOption(opt, UnitName("player"))
     end)
 end
 
@@ -1150,7 +1189,7 @@ optFrame:SetScript("OnHide", function() soundPopup:Hide() end)
 local soundPreviewBtn = MakeFlatBtn(optFrame, ">", 24, 24)
 soundPreviewBtn:SetPoint("TOPRIGHT", optFrame, "TOPRIGHT", -10, -(OPT_TOP + 68))
 soundPreviewBtn:SetScript("OnClick", function()
-    PlayPISound()
+    PlayPISound(UnitName("player"))
 end)
 soundPreviewBtn:SetScript("OnEnter", function(self)
     self:SetBackdropColor(P.btnHov[1], P.btnHov[2], P.btnHov[3], P.btnHov[4])
@@ -1550,7 +1589,7 @@ local function ShowPIRequest(senderName)
         notifFrame:Hide()
     end)
 
-    PlayPISound()
+    PlayPISound(senderName)
 end
 
 ShowNotifPreview = function()
@@ -1601,7 +1640,7 @@ ShowPreviewWithSound = function()
         notifFrame:Hide()
     end)
 
-    PlayPISound()
+    PlayPISound(playerName)
 end
 
 frame:HookScript("OnShow", function()
@@ -2061,6 +2100,10 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
                 print("|cffff4444PIority:|r " .. L.MSG_MACRO_LIMIT:format(profile.macroName))
             end
         end
+        -- Warm the macro-target cache while out of combat, so the PI request
+        -- popup still resolves the current target during the first fight even
+        -- if the priest never touches the UI (GetMacroBody is nil in combat).
+        if profile then GetMacroTarget(profile) end
         -- No saved target for this character: adopt whatever the macro currently
         -- targets (covers upgrades from the old account-wide setting and manual edits).
         if profile and GetLastTarget() == nil then

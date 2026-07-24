@@ -59,7 +59,13 @@ L.SOUND_ALARM           = "Alarm Clock"
 L.SOUND_EPIC_LOOT       = "Epic Loot"
 L.SOUND_QUEST_DONE      = "Quest Complete"
 L.SOUND_BOSS_WARNING    = "Boss Warning"
+L.SOUND_TTS_PI          = "TTS: PI requested"
+L.SOUND_TTS_NAME        = "TTS: <playername> requested PI"
 L.SOUND_NONE            = "None"
+
+-- Spoken text for the TTS sound options
+L.TTS_PI_REQUESTED      = "PI requested"
+L.TTS_NAME_REQUESTED    = "%s requested PI"
 
 -- Snapshot of English defaults, used by screenshot mode to override any locale.
 ns.englishLocale = {}
@@ -121,5 +127,11 @@ if GetLocale() == "deDE" then
     L.SOUND_EPIC_LOOT       = "Epischer Fund"
     L.SOUND_QUEST_DONE      = "Quest abgeschlossen"
     L.SOUND_BOSS_WARNING    = "Bosswarnung"
+    L.SOUND_TTS_PI          = "TTS: PI angefragt"
+    L.SOUND_TTS_NAME        = "TTS: <Spielername> bittet um PI"
     L.SOUND_NONE            = "Kein Sound"
+
+    -- Spoken text for the TTS sound options
+    L.TTS_PI_REQUESTED      = "PI angefragt"
+    L.TTS_NAME_REQUESTED    = "%s bittet um PI"
 end
