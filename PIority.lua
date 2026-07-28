@@ -63,44 +63,6 @@ local function BuildResetMacroBody(profile)
     return BuildMacroBody(profile, profile.resetTarget)
 end
 
--------------------------------------------------------------------------------
--- Spec priority (lower number = higher priority).
--------------------------------------------------------------------------------
-local SPEC_PRIORITY = {
-    [63]   = 1,   -- Fire Mage
-    [266]  = 2,   -- Demonology Warlock
-    [269]  = 3,   -- Windwalker Monk
-    [255]  = 4,   -- Survival Hunter
-    [263]  = 5,   -- Enhancement Shaman
-    [62]   = 6,   -- Arcane Mage
-    [254]  = 7,   -- Marksmanship Hunter
-    [262]  = 8,   -- Elemental Shaman
-    [1467] = 9,   -- Devastation Evoker
-    [258]  = 10,  -- Shadow Priest
-    [102]  = 11,  -- Balance Druid
-    [1480] = 12,  -- Devourer Demon Hunter
-    [103]  = 13,  -- Feral Druid
-    [265]  = 14,  -- Affliction Warlock
-    [70]   = 15,  -- Retribution Paladin
-    [104]  = 16,  -- Guardian Druid
-    [251]  = 17,  -- Frost Death Knight
-    [252]  = 18,  -- Unholy Death Knight
-    [577]  = 19,  -- Havoc Demon Hunter
-    [261]  = 20,  -- Subtlety Rogue
-    [253]  = 21,  -- Beast Mastery Hunter
-    [64]   = 22,  -- Frost Mage
-    [581]  = 23,  -- Vengeance Demon Hunter
-    [66]   = 24,  -- Protection Paladin
-    [71]   = 25,  -- Arms Warrior
-    [250]  = 26,  -- Blood Death Knight
-    [72]   = 27,  -- Fury Warrior
-    [73]   = 28,  -- Protection Warrior
-    [267]  = 29,  -- Destruction Warlock
-    [260]  = 30,  -- Outlaw Rogue
-    [259]  = 31,  -- Assassination Rogue
-    [268]  = 32,  -- Brewmaster Monk
-}
-
 local CLASS_ATLAS = {
     WARRIOR     = "classicon-warrior",
     PALADIN     = "classicon-paladin",
@@ -137,11 +99,12 @@ local SPEC_NAME = {
 -- Screenshot mode — fake roster injected for promo screenshots
 -------------------------------------------------------------------------------
 
+-- pipct values mirror the patchwerk sim data so promo shots show real gains.
 local SCREENSHOT_ROSTER = {
-    { name = "DemoAlpha",   specID = 63,  classFile = "MAGE",        level = 80, ilvl = 290 },
-    { name = "DemoBravo",   specID = 266, classFile = "WARLOCK",     level = 80, ilvl = 290 },
-    { name = "DemoCharlie", specID = 258, classFile = "PRIEST",      level = 80, ilvl = 290 },
-    { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", level = 80, ilvl = 290 },
+    { name = "DemoAlpha",   specID = 63,  classFile = "MAGE",        ilvl = 290, pipct = 6.3 },
+    { name = "DemoBravo",   specID = 266, classFile = "WARLOCK",     ilvl = 290, pipct = 4.9 },
+    { name = "DemoCharlie", specID = 258, classFile = "PRIEST",      ilvl = 290, pipct = 3.5 },
+    { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", ilvl = 290, pipct = 2.8 },
 }
 
 local function ApplyEnglishLocale()
@@ -242,15 +205,27 @@ local function GetUnknownMembers()
     return unknown
 end
 
-local TryAutopick  -- defined after UI elements are in scope
+local TryAutopick        -- defined after UI elements are in scope
+local NotifyScanComplete -- defined after UI elements are in scope
+
+-- Tracks whether the current scan actually had specs left to resolve. We only
+-- treat a scan as "successful" when we go from having unknown members to having
+-- none, so a group whose specs are all already cached (e.g. after /reload)
+-- doesn't count as a fresh scan.
+local hadUnknownMembers = false
 
 local function ScheduleRetryIfNeeded()
     if retryTimer then retryTimer:Cancel() end
     local unknown = GetUnknownMembers()
     if #unknown == 0 then
+        if hadUnknownMembers then
+            hadUnknownMembers = false
+            NotifyScanComplete()
+        end
         TryAutopick()
         return
     end
+    hadUnknownMembers = true
     retryTimer = C_Timer.NewTimer(RETRY_DELAY, function()
         retryTimer = nil
         -- Re-queue only members whose spec is still unknown
@@ -404,6 +379,59 @@ local ResetPITarget  -- defined after UI elements are in scope
 -- Roster building
 -------------------------------------------------------------------------------
 
+-- Which SimC PI table to rank by, chosen by group size: a party (<=5) uses the
+-- 5-target profile, a raid (>5) uses the single-target profile. Returns nil if
+-- the data modules aren't loaded, in which case members stay unscored and rank
+-- alphabetically.
+local function GetActivePIData()
+    if not ns.piData then return nil end
+    if GetNumGroupMembers() > 5 then
+        return ns.piData.patchwerk1
+    end
+    return ns.piData.patchwerk5
+end
+
+-- Average equipped item level across the members we can rank. Used to normalize
+-- gear so the score reflects a player's real throughput, not just their spec.
+local function GroupAvgIlvl(members)
+    local total, count = 0, 0
+    for _, m in ipairs(members) do
+        if m.ilvl and m.ilvl > 0 then
+            total = total + m.ilvl
+            count = count + 1
+        end
+    end
+    if count == 0 then return nil end
+    return total / count
+end
+
+-- The PI throughput gain a spec gets, as a percentage: (dpsWithPI - dpsNoPI) /
+-- dpsNoPI. This is the raw effectiveness of PI on that spec, independent of gear,
+-- and is exactly how the SimC tables rank specs.
+local function PIPercent(specID, data)
+    if not (specID and data and data.value and data.value2) then return nil end
+    local withPI = data.value[specID]
+    local base   = data.value2[specID]
+    if not (withPI and base and base > 0) then return nil end
+    return (withPI - base) / base * 100
+end
+
+-- PI is a damage cooldown, so tank and healer specs are ranked below every DPS
+-- regardless of their sim value; they're only a target when no DPS is available.
+-- Uses the spec's inherent role (Augmentation Evoker stays a damager).
+local function IsSupportSpec(specID)
+    if not (specID and GetSpecializationRoleByID) then return false end
+    local role = GetSpecializationRoleByID(specID)
+    return role == "TANK" or role == "HEALER"
+end
+
+-- A spec we actually rank and target for PI: a known, non-support (DPS) spec.
+-- Tanks and healers are ignored entirely -- greyed out, no gain shown, never
+-- auto-targeted -- even though tank specs do carry a sim value.
+local function IsRankableSpec(specID)
+    return specID ~= nil and not IsSupportSpec(specID)
+end
+
 local function GetSortedRoster()
     if PIorityDB and PIorityDB.screenshotMode then
         return SCREENSHOT_ROSTER
@@ -413,9 +441,20 @@ local function GetSortedRoster()
     local members = {}
 
     local selfName = UnitName("player")
-    if numMembers == 0 then
-        -- Solo: nothing to show (priest is excluded from own list)
-    else
+    -- A priest never PIs themselves, so they're left out of their own list. Any
+    -- other class can be a PI target, so show yourself in the roster too.
+    local _, playerClass = UnitClass("player")
+    local includeSelf = playerClass ~= "PRIEST"
+    if includeSelf then
+        members[#members + 1] = {
+            name   = selfName,
+            specID = specCache[selfName],
+            level  = UnitLevel("player"),
+            ilvl   = ilvlCache[selfName],
+        }
+    end
+
+    if numMembers > 0 then
         local prefix = IsInRaid() and "raid" or "party"
         for i = 1, numMembers do
             local unit = prefix .. i
@@ -431,13 +470,37 @@ local function GetSortedRoster()
         end
     end
 
+    local data = GetActivePIData()
+    if data then
+        local avgIlvl = GroupAvgIlvl(members)
+        for _, m in ipairs(members) do
+            -- Effectiveness = the spec's PI %-gain, scaled by how the player's
+            -- gear compares to the group (missing gear -> neutral 1.0), so a
+            -- better-geared player of the same spec ranks as the better target.
+            -- Tanks/healers are skipped so they carry no score or gain.
+            m.pipct = IsRankableSpec(m.specID) and PIPercent(m.specID, data) or nil
+            if m.pipct then
+                local gear = 1
+                if avgIlvl and avgIlvl > 0 and m.ilvl and m.ilvl > 0 then
+                    gear = m.ilvl / avgIlvl
+                end
+                m.score = m.pipct * gear
+            end
+        end
+    end
+
+    -- Rank by gear-normalized PI score; when the sim data isn't loaded no one is
+    -- scored and members simply fall through to the alphabetical tiebreak.
     table.sort(members, function(a, b)
-        local pa = a.specID and SPEC_PRIORITY[a.specID]
-        local pb = b.specID and SPEC_PRIORITY[b.specID]
-        if pa and pb then return pa < pb end
-        if pa then return true end   -- known spec beats unknown
-        if pb then return false end
-        return a.name < b.name      -- both unknown: alphabetical
+        local sa, sb = IsSupportSpec(a.specID), IsSupportSpec(b.specID)
+        if sa ~= sb then return not sa end   -- DPS above tanks/healers
+        if a.score and b.score then
+            if a.score ~= b.score then return a.score > b.score end
+            return a.name < b.name
+        end
+        if a.score then return true end   -- scored beats unscored
+        if b.score then return false end
+        return a.name < b.name            -- both unscored: alphabetical
     end)
 
     return members
@@ -1298,47 +1361,46 @@ local function MakeRow(index)
     classIcon:SetPoint("LEFT", btn, "LEFT", 3, 0)
     btn.classIcon = classIcon
 
-    local rank = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    rank:SetPoint("LEFT", classIcon, "RIGHT", 3, 0)
-    rank:SetWidth(16)
-    rank:SetJustifyH("RIGHT")
-    btn.rankText = rank
-
+    -- Addon-presence indicator sits directly in front of the name (fixed slot
+    -- so names stay column-aligned whether or not the player has PIority).
     local addonDot = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    addonDot:SetPoint("LEFT", rank, "RIGHT", 2, 0)
-    addonDot:SetWidth(22)
+    addonDot:SetPoint("LEFT", classIcon, "RIGHT", 4, 0)
+    addonDot:SetWidth(20)
     addonDot:SetJustifyH("LEFT")
     btn.addonDot = addonDot
 
+    local marker = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    marker:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
+    marker:SetWidth(10)
+    marker:SetJustifyH("CENTER")
+    btn.marker = marker
+
+    local piGainText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    piGainText:SetPoint("RIGHT", marker, "LEFT", -2, 0)
+    piGainText:SetWidth(44)
+    piGainText:SetJustifyH("RIGHT")
+    btn.piGainText = piGainText
+
+    -- Name stretches to fill the space between the indicator and the PI gain.
     local nameText = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    nameText:SetPoint("LEFT", addonDot, "RIGHT", 2, 0)
-    nameText:SetWidth(90)  -- default; overwritten each Refresh
+    nameText:SetPoint("LEFT",  addonDot,   "RIGHT", 2,  0)
+    nameText:SetPoint("RIGHT", piGainText, "LEFT",  -4, 0)
     nameText:SetJustifyH("LEFT")
     btn.nameText = nameText
 
-    local ilvlText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    ilvlText:SetPoint("RIGHT", btn, "RIGHT", -6, 0)
-    ilvlText:SetWidth(30)
-    ilvlText:SetJustifyH("RIGHT")
-    btn.ilvlText = ilvlText
-
-    local marker = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    marker:SetPoint("RIGHT", ilvlText, "LEFT", -2, 0)
-    marker:SetWidth(10)
-    btn.marker = marker
-
-    local levelText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    levelText:SetPoint("RIGHT", marker, "LEFT", -4, 0)
-    levelText:SetWidth(22)
-    levelText:SetJustifyH("RIGHT")
-    btn.levelText = levelText
-
-    local specText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    specText:SetPoint("LEFT",  nameText,  "RIGHT", 4,  0)
-    specText:SetPoint("RIGHT", levelText, "LEFT",  -4, 0)
-    specText:SetJustifyH("LEFT")
-    specText:SetTextColor(P.dim[1], P.dim[2], P.dim[3])
-    btn.specText = specText
+    -- Spec / character level / item level moved off the row into this tooltip
+    -- to keep the list uncluttered. tipData is refreshed each layout pass.
+    btn:SetScript("OnEnter", function(self)
+        local d = self.tipData
+        if not d then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(d.name, d.cr or 1, d.cg or 1, d.cb or 1)
+        GameTooltip:AddDoubleLine("Spec",       d.spec,  P.dim[1], P.dim[2], P.dim[3], 1, 1, 1)
+        GameTooltip:AddDoubleLine("Level",      d.level, P.dim[1], P.dim[2], P.dim[3], 1, 1, 1)
+        GameTooltip:AddDoubleLine("Item Level", d.ilvl,  P.dim[1], P.dim[2], P.dim[3], 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     btn:SetScript("OnClick", function()
         if not btn.memberName then return end
@@ -1363,10 +1425,6 @@ function frame.Refresh()
     local roster     = GetSortedRoster()
     local lastTarget = GetLastTarget()
 
-    -- Name column: 50% of the space not consumed by fixed columns, min 90px.
-    -- Fixed left (icon+rank+dot+gaps)=70, fixed right (ilvl+marker+level+gaps)=78, total=148.
-    local nameWidth = math.max(90, math.floor((scrollFrame:GetWidth() - 148) * 0.50))
-
     local inScreenshot = PIorityDB and PIorityDB.screenshotMode
     resetBtn:SetEnabled(not inScreenshot and lastTarget ~= nil)
     reInspectBtn:SetEnabled(not inScreenshot and GetNumGroupMembers() > 0)
@@ -1383,9 +1441,6 @@ function frame.Refresh()
     for i, entry in ipairs(roster) do
         local row = GetRow(i)
         row.memberName = entry.name
-        row.nameText:SetWidth(nameWidth)
-
-        row.rankText:SetText("|cff555566" .. i .. ".|r")
 
         local unit = GetUnitForName(entry.name)
         local _, classFile
@@ -1414,23 +1469,35 @@ function frame.Refresh()
             row.addonDot:SetText("")
         end
 
+        -- Spec string for the hover tooltip. Greenish when the spec is ranked
+        -- for PI (has a sim score); grey for tanks/healers and anything not ranked.
+        local specStr
         if entry.specID then
-            local prio  = SPEC_PRIORITY[entry.specID]
-            local sname = SPEC_NAME[entry.specID] or ("Spec " .. entry.specID)
-            row.specText:SetText(prio
+            local ranked = IsRankableSpec(entry.specID) and entry.score ~= nil
+            local sname  = SPEC_NAME[entry.specID] or ("Spec " .. entry.specID)
+            specStr = ranked
                 and ("|cff88bb88" .. sname .. "|r")
-                or  ("|cff888888" .. sname .. "|r"))
+                or  ("|cff888888" .. sname .. "|r")
         else
-            row.specText:SetText("|cff444455...|r")
+            specStr = "|cff444455...|r"
         end
 
-        row.levelText:SetText((entry.level and entry.level > 0)
-            and ("|cff999999" .. entry.level .. "|r")
+        -- Gear-normalized PI gain: the spec's %-gain scaled by the player's item
+        -- level vs the group, so the shown number matches the ranking order.
+        -- Falls back to the raw %-gain when unscored (e.g. screenshot roster).
+        local gain = entry.score or entry.pipct
+        row.piGainText:SetText(gain
+            and ("|cff00ff96+%.1f%%|r"):format(gain)
             or  "|cff444455-|r")
 
-        row.ilvlText:SetText(entry.ilvl
-            and ("|cffffd700" .. entry.ilvl .. "|r")
-            or  "|cff444455-|r")
+        -- Level / item level now live in the tooltip built by the row OnEnter.
+        row.tipData = {
+            name  = entry.name,
+            cr    = cc and cc.r, cg = cc and cc.g, cb = cc and cc.b,
+            spec  = specStr,
+            level = (entry.level and entry.level > 0) and tostring(entry.level) or "-",
+            ilvl  = entry.ilvl and ("|cffffd700" .. entry.ilvl .. "|r") or "-",
+        }
 
         row.marker:SetText(entry.name == lastTarget and "|cff00ff96>|r" or "")
 
@@ -1459,12 +1526,24 @@ TryAutopick = function()
     local roster = GetSortedRoster()
     if #roster == 0 then return end
     local top = roster[1]
-    if top.specID and SPEC_PRIORITY[top.specID] and GetLastTarget() ~= top.name then
+    -- Roster is sorted best-first by gear-normalized PI score. Never auto-target
+    -- a tank/healer, even if they're the only ranked-looking entry.
+    local topRanked = IsRankableSpec(top.specID) and top.score ~= nil
+    if topRanked and GetLastTarget() ~= top.name then
         UpdateMacroTarget(CLASS_CONFIG.PRIEST, top.name)
         SetLastTarget(top.name)
         statusLabel:SetText(L.STATUS_AUTO .. "|cff00ff96" .. top.name .. "|r")
         frame.Refresh()
     end
+end
+
+-- A full 5-man party finished scanning (every member's spec resolved). Pop the
+-- roster open so the player can pick the macro target. Fired once per scan from
+-- ScheduleRetryIfNeeded, gated to real 5-man parties (not raids, not partial groups).
+NotifyScanComplete = function()
+    if IsInRaid() or GetNumGroupMembers() ~= 5 then return end
+    frame.Refresh()
+    if not frame:IsShown() then frame:Show() end
 end
 
 -- Hunter auto-pick: targets the first tank in the group. The solo case (own pet)

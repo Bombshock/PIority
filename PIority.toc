@@ -2,8 +2,10 @@
 ## Title: PIority
 ## Notes: Automatically keeps a Power Infusion (PI_H) macro on your best-ranked group member as a priest, or a Misdirection (MD_H) macro on your tank or pet as a hunter. Only the macro's targeting line is ever touched - your custom lines are preserved.
 ## Author: NeonLazor
-## Version: 1.3
+## Version: 1.5
 ## SavedVariables: PIorityDB
 
 PIority_Locale.lua
+pi_patchwerk1.lua
+pi_patchwerk5.lua
 PIority.lua

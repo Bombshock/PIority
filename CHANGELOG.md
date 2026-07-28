@@ -2,6 +2,24 @@
 
 All notable changes to PIority are documented here.
 
+## [1.5] - 2026-07-28
+
+### Added
+- **PI gain shown per player** — every roster row now displays the spec's actual Power Infusion gain (e.g. +6.3%), so you can see what a cast is worth instead of just the ranking order.
+- **Non-priests are ranked too** — your own character now appears in the roster and is ranked alongside the group (handy for hunters), rather than being left out of the list.
+- **Auto-open when the group is known** — in a full 5-man party the roster pops open automatically once every member's spec has resolved, so you're ready to pick a target the moment scanning finishes.
+
+## [1.4] - 2026-07-28
+
+### Changed
+- **Data-driven ranking** — the roster is now ranked by real SimulationCraft Power Infusion sim data (the measured %-DPS gain per spec) instead of a hand-maintained priority list. Gains are normalized by item level, so a better-geared player of the same spec ranks higher, and party (≤5) and raid (>5) groups each use their own sim profile.
+- **Tanks and healers sink to the bottom** — support specs are now detected by their assigned role and always sorted below DPS, rather than being placed by the old static spec list.
+
+## [1.3.1] - 2026-07-24
+
+### Fixed
+- The PI request popup now shows up during combat. Before, it only appeared out of combat, so priests missed requests in the middle of a fight — exactly when they matter most.
+
 ## [1.3] - 2026-07-04
 
 ### Added
