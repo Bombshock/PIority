@@ -9,6 +9,7 @@ The macro stays **yours**: PIority never rewrites your macro — it only swaps t
 ## Features
 
 - **Priority-sorted roster** — all 32 DPS/tank specs ranked by PI value, with class-colored names and spec labels
+- **Real DPS gain per player** — each row shows the absolute damage Power Infusion adds for that player (e.g. `+18.3k`), based on SimulationCraft sim data and scaled by item level, so ranking reflects who actually benefits the group most — not just the biggest percentage
 - **Non-destructive macro editing** — only the targeting clause of the managed `/cast` line is ever changed; every other line you add to the macro is preserved exactly as you wrote it (if the line can't be found, PIority warns instead of touching the macro)
 - **Auto-pick mode** — priests automatically target the highest-priority player when everyone's spec is known; hunters automatically target the group's tank
 - **Hunter Misdirection support** — maintains an MD_H macro targeting your tank in groups or your pet when solo

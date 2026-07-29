@@ -2,6 +2,11 @@
 
 All notable changes to PIority are documented here.
 
+## [1.6] - 2026-07-29
+
+### Changed
+- **Ranked by real DPS gain, not percentage** — the roster now ranks and shows each player's *absolute* Power Infusion gain in DPS (e.g. `+18.3k`) instead of a percentage. Percentage understated high-throughput specs: in 5-target content an Elemental Shaman gaining +18.3k DPS was ranked below a Retribution Paladin gaining only +10.7k just because the Paladin's percentage was marginally higher. Ranking by the damage PI actually adds puts the biggest beneficiary on top, where it belongs. Gear (item level vs the group) still scales the number, so a better-geared player of the same spec still ranks higher.
+
 ## [1.5] - 2026-07-28
 
 ### Added

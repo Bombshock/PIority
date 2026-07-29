@@ -99,12 +99,13 @@ local SPEC_NAME = {
 -- Screenshot mode — fake roster injected for promo screenshots
 -------------------------------------------------------------------------------
 
--- pipct values mirror the patchwerk sim data so promo shots show real gains.
+-- pigain values (raw simmed DPS gain) mirror the patchwerk data so promo shots
+-- show real numbers.
 local SCREENSHOT_ROSTER = {
-    { name = "DemoAlpha",   specID = 63,  classFile = "MAGE",        ilvl = 290, pipct = 6.3 },
-    { name = "DemoBravo",   specID = 266, classFile = "WARLOCK",     ilvl = 290, pipct = 4.9 },
-    { name = "DemoCharlie", specID = 258, classFile = "PRIEST",      ilvl = 290, pipct = 3.5 },
-    { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", ilvl = 290, pipct = 2.8 },
+    { name = "DemoAlpha",   specID = 63,  classFile = "MAGE",        ilvl = 290, pigain = 24800 },
+    { name = "DemoBravo",   specID = 266, classFile = "WARLOCK",     ilvl = 290, pigain = 19300 },
+    { name = "DemoCharlie", specID = 258, classFile = "PRIEST",      ilvl = 290, pigain = 12100 },
+    { name = "DemoDelta",   specID = 251, classFile = "DEATHKNIGHT", ilvl = 290, pigain = 8600 },
 }
 
 local function ApplyEnglishLocale()
@@ -405,15 +406,24 @@ local function GroupAvgIlvl(members)
     return total / count
 end
 
--- The PI throughput gain a spec gets, as a percentage: (dpsWithPI - dpsNoPI) /
--- dpsNoPI. This is the raw effectiveness of PI on that spec, independent of gear,
--- and is exactly how the SimC tables rank specs.
-local function PIPercent(specID, data)
+-- The absolute PI throughput gain a spec gets, in raw simmed DPS:
+-- dpsWithPI - dpsNoPI. This is the real damage PI adds to that spec, which is
+-- what actually decides who benefits the group most -- a small percentage on a
+-- high-throughput spec beats a big percentage on a low one.
+local function PIGain(specID, data)
     if not (specID and data and data.value and data.value2) then return nil end
     local withPI = data.value[specID]
     local base   = data.value2[specID]
     if not (withPI and base and base > 0) then return nil end
-    return (withPI - base) / base * 100
+    return withPI - base
+end
+
+-- Format a raw DPS gain compactly for the roster, e.g. 18326 -> "18.3k".
+local function FormatGain(dps)
+    if dps >= 1000 then
+        return ("%.1fk"):format(dps / 1000)
+    end
+    return ("%d"):format(dps)
 end
 
 -- PI is a damage cooldown, so tank and healer specs are ranked below every DPS
@@ -474,17 +484,17 @@ local function GetSortedRoster()
     if data then
         local avgIlvl = GroupAvgIlvl(members)
         for _, m in ipairs(members) do
-            -- Effectiveness = the spec's PI %-gain, scaled by how the player's
-            -- gear compares to the group (missing gear -> neutral 1.0), so a
-            -- better-geared player of the same spec ranks as the better target.
-            -- Tanks/healers are skipped so they carry no score or gain.
-            m.pipct = IsRankableSpec(m.specID) and PIPercent(m.specID, data) or nil
-            if m.pipct then
+            -- Effectiveness = the spec's absolute simmed DPS gain from PI, scaled
+            -- by how the player's gear compares to the group (missing gear ->
+            -- neutral 1.0), so a better-geared player of the same spec ranks as
+            -- the better target. Tanks/healers carry no score or gain.
+            m.pigain = IsRankableSpec(m.specID) and PIGain(m.specID, data) or nil
+            if m.pigain then
                 local gear = 1
                 if avgIlvl and avgIlvl > 0 and m.ilvl and m.ilvl > 0 then
                     gear = m.ilvl / avgIlvl
                 end
-                m.score = m.pipct * gear
+                m.score = m.pigain * gear
             end
         end
     end
@@ -1482,12 +1492,13 @@ function frame.Refresh()
             specStr = "|cff444455...|r"
         end
 
-        -- Gear-normalized PI gain: the spec's %-gain scaled by the player's item
-        -- level vs the group, so the shown number matches the ranking order.
-        -- Falls back to the raw %-gain when unscored (e.g. screenshot roster).
-        local gain = entry.score or entry.pipct
+        -- Gear-normalized PI gain: the spec's absolute simmed DPS gain scaled by
+        -- the player's item level vs the group, so the shown number matches the
+        -- ranking order. Falls back to the raw gain when unscored (screenshot
+        -- roster).
+        local gain = entry.score or entry.pigain
         row.piGainText:SetText(gain
-            and ("|cff00ff96+%.1f%%|r"):format(gain)
+            and ("|cff00ff96+%s|r"):format(FormatGain(gain))
             or  "|cff444455-|r")
 
         -- Level / item level now live in the tooltip built by the row OnEnter.
