@@ -1979,41 +1979,50 @@ end
 -------------------------------------------------------------------------------
 
 local minimapBtn = (function()
-    local RADIUS = 80  -- distance from minimap centre
+    -- Gap between the minimap edge and the button ring, matching LibDBIcon.
+    -- The radius itself is derived from the live minimap size so the button
+    -- stays flush when Blizzard (or another addon) resizes the minimap.
+    local INSET = 5
 
     local btn = CreateFrame("Button", "PIorityMinimapBtn", Minimap)
-    btn:SetSize(32, 32)
+    btn:SetSize(31, 31)
     btn:SetFrameStrata("MEDIUM")
     btn:SetFrameLevel(8)
 
-    -- Circular mask
-    local mask = btn:CreateMaskTexture()
-    mask:SetAllPoints()
-    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
-                    "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-
     local icon = btn:CreateTexture(nil, "BACKGROUND")
-    icon:SetAllPoints()
-    icon:AddMaskTexture(mask)
+    icon:SetSize(20, 20)
+    icon:SetPoint("CENTER", btn, "CENTER", 0, 1)
     btn.icon = icon
 
-    -- Highlight ring
-    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints()
-    hl:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    -- Circular mask
+    local mask = btn:CreateMaskTexture()
+    mask:SetAllPoints(icon)
+    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
+                    "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    icon:AddMaskTexture(mask)
 
-    -- Border ring
+    -- Border ring. The tracking-border art is offset inside its texture, so it
+    -- must be anchored TOPLEFT to the button - centring it shifts the ring off
+    -- the icon.
     local border = btn:CreateTexture(nil, "OVERLAY")
-    border:SetSize(54, 54)
-    border:SetPoint("CENTER")
+    border:SetSize(53, 53)
+    border:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 
     local function UpdatePosition(angle)
         local rad = math.rad(angle)
+        local w = (Minimap:GetWidth()  / 2) + INSET
+        local h = (Minimap:GetHeight() / 2) + INSET
+        btn:ClearAllPoints()
         btn:SetPoint("CENTER", Minimap, "CENTER",
-            RADIUS * math.cos(rad),
-            RADIUS * math.sin(rad))
+            math.cos(rad) * w,
+            math.sin(rad) * h)
     end
+
+    -- Keep the button flush if the minimap changes size after login.
+    Minimap:HookScript("OnSizeChanged", function()
+        UpdatePosition((PIorityDB and PIorityDB.minimapAngle) or 225)
+    end)
 
     -- Drag to reposition
     btn:RegisterForDrag("LeftButton")
