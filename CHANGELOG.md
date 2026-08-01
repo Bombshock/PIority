@@ -2,6 +2,16 @@
 
 All notable changes to PIority are documented here.
 
+## [1.7] - 2026-08-01
+
+**Preparation for patch 12.1 — no new features.** This release exists so PIority is ready when 12.1 lands; none of the ranking, macro, or roster behaviour has changed.
+
+### Changed
+- **Runs on both the live client and the 12.1 PTR** — the TOC now declares both (`120007, 120100`), so this single build loads without an "out of date" flag on either, and will keep working the day 12.1 goes live with no update needed. The addon previously still declared `120000`, so it had been showing as out of date on the live client; that is fixed as a side effect.
+
+### Fixed
+- **Minimap button sits properly on the minimap again** — its ring was anchored by the centre, which pushed the visible border down and to the right of the icon and off the minimap edge; it is now anchored the standard way. The button's distance from the minimap centre is also measured from the minimap's real size instead of a fixed 80 pixels, so it stays flush if the minimap is ever resized.
+
 ## [1.6] - 2026-07-29
 
 ### Changed
