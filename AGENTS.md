@@ -105,7 +105,8 @@ A World of Warcraft Retail addon that keeps a single macro's targeting line poin
 - Members are ranked and shown by **absolute** simmed DPS gain (`value - value2`, via `PIGain`), gear-scaled by the player's ilvl vs the group average — not by percentage gain. Absolute gain reflects the real damage PI adds, so a high-throughput spec outranks a lower one with a bigger percentage. The roster label shows the raw gain (`FormatGain`, e.g. `+18.3k`).
 - Persistence goes through `PIorityDB` (declared in the `.toc`). Layout/state (window position, size, open state, per-character macro target, notification frame position) route through the existing save/restore helpers and the login load path.
 - UI is a flat dark theme. Build new controls with the existing helpers — `MakeFlatBtn`, `ApplyFlatBg`, `AutoSizeBtn` — rather than styling from scratch.
-- Releases: bump `## Version` in `PIority.toc` and add a matching `CHANGELOG.md` entry together; the build script reads both `## Version` and `## Interface` from the `.toc` and names the zip `PIority-<version>-<interface>.zip`, so retargeting a new client changes the release filename too.
+- Releases: bump `## Version` in `PIority.toc` and add a matching `CHANGELOG.md` entry together; the build script reads the version from the `.toc`.
+- `## Interface` lists **every** client the build supports — current live plus the next patch's PTR build (e.g. `120007, 120100`) — so a single release loads un-flagged on both and needs no cutover on patch day. Prepare for an upcoming patch by appending its interface number, not by branching or by replacing the live one. Drop an old number only when that client is no longer supported. Branch per-patch only if the two clients ever need materially different code.
 
 ## Verification
 

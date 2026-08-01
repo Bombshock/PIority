@@ -1,4 +1,4 @@
-## Interface: 120000
+## Interface: 120007, 120100
 ## Title: PIority
 ## Notes: Automatically keeps a Power Infusion (PI_H) macro on your best-ranked group member as a priest, or a Misdirection (MD_H) macro on your tank or pet as a hunter. Only the macro's targeting line is ever touched - your custom lines are preserved.
 ## Author: NeonLazor
